@@ -4,6 +4,8 @@
 #include <QPushButton>
 #include <QComboBox>
 #include <QLineEdit>
+#include <QCheckBox>
+#include <QLabel>
 
 #include <QSqlRecord>
 #include <QSqlField>
@@ -106,6 +108,11 @@ FilterWidget::FilterWidget(QWidget* parent) : QWidget{parent}
     QObject::connect(this->findChild<QPushButton*>("addFilterBtn"),    SIGNAL(clicked(bool)), this, SLOT(addFilter()));
     QObject::connect(this->findChild<QPushButton*>("submitFilterBtn"), SIGNAL(clicked(bool)), this, SLOT(submitChooseFilters()));
     QObject::connect(this->findChild<QPushButton*>("clearFiltersBtn"), SIGNAL(clicked(bool)), this, SIGNAL(clearFiltersEffects()));
+    QLabel* lbl = new QLabel("In all page ");
+    btns_layout->addWidget(lbl);
+    QCheckBox* check_box = new QCheckBox;
+    btns_layout->addWidget(check_box);
+    QObject::connect(check_box, &QCheckBox::toggled, this, &FilterWidget::isInAllPage );
 }
 
 void FilterWidget::addFilter()

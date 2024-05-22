@@ -19,29 +19,38 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QSqlResult>
-#include <thread>
-#include <vector>
+#include <QSqlIndex>
 
-bool MainWindow::openDB(const QString& db_name)
+#include <QtConcurrent>
+#include <QFuture>
+
+QSqlDatabase MainWindow::getDB(const QString& db_name)
 {
-    QSqlDatabase db = QSqlDatabase::database();
-    if(!db.open())
+    QSqlDatabase db;
+    QString connect_name = QThread::currentThread()->objectName();
+    if(QSqlDatabase::contains(connect_name))
     {
-        db = QSqlDatabase::addDatabase("QSQLITE");
-        db.setDatabaseName(db_name);
+        db = QSqlDatabase::database(connect_name);
     }
-    return db.open();
+    else
+    {
+        db = QSqlDatabase::addDatabase("QSQLITE", connect_name);
+        db.setDatabaseName(db_name);
+        if(!db.isValid() || !db.open())
+            qDebug() << "DB connection creation error!";
+    }
+    return db;
 }
 
 void MainWindow::prepareModel()
 {
-    QString db_name = "C:\\UserDataBase\\study_db.db";
-    if(!openDB(db_name))
+    QSqlDatabase db = getDB(db_name);
+    if(!db.open())
     {
         qDebug() << "Can't open DataBase connection";
         return;
     }
-    model = new QSqlTableModel(this);
+    model = new QSqlTableModel(this, db);
     model->setTable("USER");
     model->select();
     QSqlRecord r = model->record();
@@ -98,6 +107,7 @@ void MainWindow::search()
     {
         if(model->record(i).value(column_index).toString() == txt_to_find)
         {
+
             windows->currentWidget()->findChild<QTableView*>()->selectionModel()->select(
                 model->index(i, column_index),  QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows );
             break;
@@ -114,6 +124,14 @@ void MainWindow::createFilter()
     filter_btn->setObjectName("FilterBtn");
     toolbar->addWidget(filter_btn);
 
+    proxy_model = new MultiSortFilterProxyModel(this);
+    QObject::connect(filter_wgt, &FilterWidget::submitFilters, proxy_model, &MultiSortFilterProxyModel::addFilters);
+    QTableView* view = this->findChild<QTableView*>("MainPageView");
+    proxy_model->setSourceModel( page_model );
+    view->setModel(proxy_model);
+
+    QObject::connect(filter_wgt, &FilterWidget::isInAllPage, this, &MainWindow::filterSearchState);
+    QObject::connect(filter_wgt, &FilterWidget::clearFiltersEffects, proxy_model, &MultiSortFilterProxyModel::clearFilters);
     QObject::connect(this,       SIGNAL(preparedModel(QSqlTableModel)), filter_wgt, SLOT(updateColumns(QSqlTableModel)));
     QObject::connect(filter_btn, SIGNAL(clicked(bool)),                 this,       SLOT(getPreparedModel()));
     QObject::connect(filter_btn, SIGNAL(clicked(bool)),                 filter_wgt, SLOT(show()));
@@ -165,9 +183,11 @@ void MainWindow::addWidgetsToMainTab(QWidget* wgt)
         qDebug() << "Can't add widgets to main tab";
         return;
     }
-    QStackedWidget* pages = new QStackedWidget;
-    pages->setObjectName("PagesWgt");
-    wgt_layout->addWidget(pages);
+    QTableView* page = new QTableView;
+    page->setObjectName("MainPageView");
+    wgt_layout->addWidget(page);
+    page_model = new QSqlQueryModel;
+    page->setModel(page_model);
 
     QPushButton* prev_btn = new QPushButton("prev");
     QPushButton* next_btn = new QPushButton("next");
@@ -190,19 +210,41 @@ void MainWindow::addWidgetsToMainTab(QWidget* wgt)
 
     QObject::connect(prev_btn, &QPushButton::clicked, cur_page,
     [=](){
-        cur_page->setText( QString::number( cur_page->text().toInt() - 1) );
-        pages->setCurrentIndex( cur_page->text().toInt() );
+        int n = cur_page->text().toInt() - 1;
+        if(n >= 0)
+        {
+            cur_page->setText( QString::number(n) );
+            QFuture<QSqlQuery> future = QtConcurrent::run(getCurrentPageData, this, n, rows_in_page);
+            if(future.isValid())
+                page_model->setQuery( std::move(future.result()) );
+        }
     } );
 
     QObject::connect(next_btn, &QPushButton::clicked, cur_page,
     [=](){
-        cur_page->setText(QString::number(cur_page->text().toInt() + 1));
-        pages->setCurrentIndex(cur_page->text().toInt());
+        int n = cur_page->text().toInt() + 1;
+        if(n <= pages_cnt->text().toInt())
+        {
+            cur_page->setText( QString::number(n) );
+            QFuture<QSqlQuery> future = QtConcurrent::run(getCurrentPageData, this, n, rows_in_page);
+            if(future.isValid())
+                page_model->setQuery( std::move(future.result()) );
+        }
     } );
 
-    QObject::connect(cur_page, &QLineEdit::editingFinished, pages,
+    QObject::connect(cur_page, &QLineEdit::editingFinished, page,
     [=](){
-        pages->setCurrentIndex(cur_page->text().toInt());
+        int n = cur_page->text().toInt();
+        if(n >= 0 && n <= pages_cnt->text().toInt())
+        {
+            cur_page->setText(QString::number(n));
+            QFuture<QSqlQuery> future = QtConcurrent::run(getCurrentPageData, this, n, rows_in_page);
+            if(future.isValid())
+                page_model->setQuery( std::move(future.result()) );
+        }
+        else
+            cur_page->setText("error");
+
     } );
 }
 
@@ -230,35 +272,9 @@ void MainWindow::createTabes()
     windows->insertTab(static_cast<int>(Tabes::Main), main_wgt, "Main");
 }
 
-QWidget* MainWindow::createWidgetWithView(MultiSortFilterProxyModel* proxy_model)
-{
-    QWidget* wgt = new QWidget;
-    QHBoxLayout* wgt_layout = new QHBoxLayout;
-    wgt->setLayout(wgt_layout);
-    QTableView* view = new QTableView;
-    view->setModel(proxy_model);
-    wgt_layout->addWidget(view);
-    return wgt;
-}
-
-void MainWindow::addPages(int f_page_index, int lst_page_index, int f_row_index, int rows_in_page)
-{
-    auto pages_wgt = this->findChild<QStackedWidget*>("PagesWgt");
-    for(; f_page_index < lst_page_index; ++f_page_index, f_row_index += rows_in_page)
-    {
-        // std::scoped_lock lk{ main_page_wgt_mutex };
-        MultiSortFilterProxyModel* proxy_model = new MultiSortFilterProxyModel(this);
-        proxy_model->setSourceModel(model);
-        proxy_model->setRowsToShow(f_row_index, f_row_index + rows_in_page);
-        pages_wgt->addWidget( createWidgetWithView(proxy_model) );
-        QObject::connect(filter_wgt, &FilterWidget::clearFiltersEffects, proxy_model, &MultiSortFilterProxyModel::clearFilters);
-        QObject::connect(filter_wgt, &FilterWidget::submitFilters, proxy_model, &MultiSortFilterProxyModel::addFilters);
-    }
-}
-
 void MainWindow::fillMainTab(const QString &table_name)
 {
-    QSqlQuery sqlQ("SELECT COUNT(*) FROM " + table_name);
+    QSqlQuery sqlQ("SELECT COUNT(*) FROM " + table_name, getDB(db_name));
     if(!sqlQ.next())
     {
         qDebug() << "Can't fill main page";
@@ -266,33 +282,36 @@ void MainWindow::fillMainTab(const QString &table_name)
     }
 
     int rows = sqlQ.value(0).toInt();
-    constexpr int rows_in_page{20};
     int pages = ( ( rows - 1) / rows_in_page ) + 1; // Деление с округлением вверх
-    constexpr int threads_cnt{5};
-    int page_to_thread = pages / threads_cnt;
-
     emit pagesCount( QString::number(pages) );
-    // std::vector<std::thread> threads_to_fill_wgt(threads_cnt);
-    for(int i = 0; i < threads_cnt; ++i)
-    {
-        int start_page = (i * page_to_thread) + 1;
-        int end_page = (i+1) * page_to_thread;
-        int first_row = ( i*page_to_thread*rows_in_page );
-        addPages(start_page, end_page, first_row, rows_in_page);
-        // threads_to_fill_wgt[i] = std::thread(&MainWindow::addPages, this, start_page, end_page, first_row, rows_in_page);
-    }
+    page_model->setQuery(getCurrentPageData(1, rows_in_page));
+}
 
-    /*
-    for(auto& thread : threads_to_fill_wgt)
-        thread.join();
-    */
+QSqlQuery MainWindow::getCurrentPageData(int page_index, int rows_in_page)
+{
+    QSqlDatabase db = getDB(db_name);
+    QString f_row = QString::number(page_index * rows_in_page);
+    QString l_row = QString::number(f_row.toInt() + rows_in_page);
+    QString query = "SELECT * FROM " + model->tableName() + " WHERE ID " + " BETWEEN " + f_row + " AND " + l_row + " LIMIT " + QString::number(rows_in_page);
+    QSqlQuery sqlQ(query, db);
+    return sqlQ;
+}
+
+void MainWindow::filterSearchState(bool in_all_page)
+{
+    if(in_all_page)
+        proxy_model->setSourceModel(model);
+    else
+        proxy_model->setSourceModel(page_model);
 }
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), windows{new QTabWidget}, model{nullptr}, filter_wgt{nullptr}
+    : QMainWindow(parent), windows{new QTabWidget}, model{nullptr}, filter_wgt{nullptr}, rows_in_page{20},
+    db_name{"C:\\UserDataBase\\study_db.db"}, page_model{nullptr}, proxy_model{nullptr}
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    this->thread()->setObjectName("MainThread");
     QHBoxLayout* main_layout = new QHBoxLayout;
     main_layout->setObjectName("MainLayout");
     main_layout->addWidget(windows);

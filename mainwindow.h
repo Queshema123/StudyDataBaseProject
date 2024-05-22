@@ -6,7 +6,7 @@
 #include <QLayout>
 #include <QTableView>
 #include <QSqlTableModel>
-#include <mutex>
+#include <QSqlResult>
 #include "multisortfilterproxymodel.h"
 #include "filterwidget.h"
 
@@ -21,11 +21,14 @@ class MainWindow : public QMainWindow
     Q_OBJECT
     QTabWidget* windows;
     QSqlTableModel* model;
+    QSqlQueryModel* page_model;
+    MultiSortFilterProxyModel* proxy_model;
     FilterWidget* filter_wgt;
-    // mutable std::mutex main_page_wgt_mutex;
+    int rows_in_page;
+    QString db_name;
     enum class Tabes {Main, Phone, Names};
 
-    bool openDB(const QString& db_name);
+    QSqlDatabase getDB(const QString& db_name);
     void prepareModel();
     void hideColumns(QTableView* view);
     void addTableView(const QString& object_name, QLayout* layout, const QVector<QString>& column_to_show = {});
@@ -36,18 +39,21 @@ class MainWindow : public QMainWindow
     void addWidgetsToMainTab(QWidget* wgt);
     void createTabes();
     void search();
-    QWidget* createWidgetWithView(MultiSortFilterProxyModel* proxy_model);
-    void addPages(int f_page_index, int lst_page_index, int f_row_index, int rows_in_page);
     void fillMainTab(const QString &table_name);
+    QSqlQuery getCurrentPageData(int page_index, int rows_in_page);
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 public slots:
     void getPreparedModel();
+    void filterSearchState(bool in_all_page);
 signals:
     void preparedModel(const QSqlTableModel& model);
     void pagesCount(const QString& count);
+    void createdFilter(MultiSortFilterProxyModel* filter);
+    void currentPageData(const QSqlResult* result);
 private:
     Ui::MainWindow *ui;
 };
+
 #endif // MAINWINDOW_H
