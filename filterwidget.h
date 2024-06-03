@@ -25,11 +25,10 @@ public:
 public slots:
     void addFilter();
     void deleteFilter();
-    void updateColumns(const QSqlTableModel& model);
+    void updateColumns(const QSqlQueryModel& model);
 signals:
     void submitFilters(const QMap<int, QVariant> &values, const QMap<int, MultiSortFilterProxyModel::CompareOperation> &operations);
     void clearFiltersEffects();
-    void isInAllPage(bool isInAllPage);
 private slots:
     void submitChooseFilters();
 };

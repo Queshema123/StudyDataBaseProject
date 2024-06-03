@@ -13,7 +13,7 @@
 #include <QPushButton>
 #include <QInputDialog>
 #include <QItemSelectionModel>
-#include <QStackedWidget>
+#include <QCheckBox>
 
 #include <QSqlRecord>
 #include <QSqlError>
@@ -42,24 +42,29 @@ QSqlDatabase MainWindow::getDB(const QString& db_name)
 QSqlQuery MainWindow::getCurrentPageData(int page_index, int rows_in_page)
 {
     QSqlDatabase db = getDB(db_name);
-    QString f_row = QString::number(page_index * rows_in_page +1);
+    QString f_row = QString::number(rows_in_page * (page_index - 1) + 1);
     QString l_row = QString::number(f_row.toInt() + rows_in_page);
-    QString query = "SELECT * FROM " + model->tableName() + " WHERE ID " + " BETWEEN " + f_row + " AND " + l_row + " LIMIT " + QString::number(rows_in_page);
+    QString query = "SELECT * FROM USER WHERE ID BETWEEN " + f_row + " AND " + l_row + " LIMIT " + QString::number(rows_in_page);
     QSqlQuery sqlQ(query, db);
     return sqlQ;
 }
 
-QModelIndex MainWindow::getSearchedItemIndex(int column_index, const QString &finding_value)
+bool MainWindow::isRightRow(const QSqlRecord &row, const QList<int> &columns_indexes, const QList<QString> &finding_values)
 {
-    int i = 0;
-    while(model->canFetchMore())
+    for(int i = 0; i < columns_indexes.size(); ++i)
     {
-        for(;i < model->rowCount(); ++i)
-        {
-            if(model->record(i).value(column_index).toString() == finding_value )
-                return model->index(i, column_index);
-        }
-        model->fetchMore();
+        if( row.value(columns_indexes[i]).toString() != finding_values[i] )
+            return false;
+    }
+    return true;
+}
+
+QModelIndex MainWindow::getSearchedItemIndex(const QList<int> &columns_indexes, const QList<QString> &finding_values)
+{
+    for(int i = 0;i < page_model->rowCount(); ++i)
+    {
+        if( isRightRow( page_model->record(i), columns_indexes, finding_values) )
+            return page_model->index(i, columns_indexes.first());
     }
 
     return QModelIndex();
@@ -67,25 +72,13 @@ QModelIndex MainWindow::getSearchedItemIndex(int column_index, const QString &fi
 
 void MainWindow::prepareModel()
 {
-    QSqlDatabase db = getDB(db_name);
-    if(!db.open())
-    {
-        qDebug() << "Can't open DataBase connection";
-        return;
-    }
-    model = new QSqlTableModel(this, db);
-    model->setTable("USER");
-    model->select();
-    QSqlRecord r = model->record();
-    for(int i = 0; i < r.count(); ++i)
-    {
-        model->setHeaderData(i, Qt::Horizontal, r.fieldName(i));
-    }
+    page_model = new QSqlQueryModel;
+    page_model->setQuery(getCurrentPageData(1, rows_in_page));
 }
 
 void MainWindow::hideColumns(QTableView* view)
 {
-    int columns = model->record().count();
+    int columns = page_model->record().count();
     for(int i = 0; i < columns; ++i)
     {
         view->hideColumn(i);
@@ -96,7 +89,7 @@ void MainWindow::addTableView(const QString& object_name, QLayout* layout, const
 {
     QTableView* view = new QTableView;
     view->setObjectName(object_name);
-    view->setModel(model);
+    view->setModel(page_model);
     layout->addWidget(view);
 
     if(column_to_show.size() > 0)
@@ -104,7 +97,7 @@ void MainWindow::addTableView(const QString& object_name, QLayout* layout, const
 
     for(const auto& column : column_to_show)
     {
-        view->showColumn( model->record().indexOf(column) );
+        view->showColumn( page_model->record().indexOf(column) );
     }
 }
 
@@ -126,7 +119,7 @@ void MainWindow::createMenu()
 
 void MainWindow::getPreparedModel()
 {
-    emit preparedModel(*model);
+    emit preparedModel(*page_model);
 }
 
 void MainWindow::selectSearchedIndex(int row, int column)
@@ -137,15 +130,32 @@ void MainWindow::selectSearchedIndex(int row, int column)
     );
 }
 
+void MainWindow::fillSearchedInfo(QList<int> &columns_indexes, QList<QString> &values_to_find, QObject* parent_wgt)
+{
+    // ParentWgt -> QWidget -> QLabel & QLineEdit
+    const QList<QWidget*> wgts = qobject_cast<QWidget*>( parent_wgt )->findChildren<QWidget*>();
+    for(auto wgt : wgts)
+    {
+        if(QString("QWidget") != wgt->metaObject()->className())
+            continue;
+        if(!wgt->findChild<QCheckBox*>()->isChecked())
+            continue;
+        values_to_find.append( wgt->findChild<QLineEdit*>()->text() );
+        columns_indexes.append( page_model->record().indexOf( wgt->findChild<QLabel*>()->objectName() ) );
+    }
+}
+
 void MainWindow::search()
 {
-    QString value_to_find{ QObject::sender()->parent()->findChild<QLineEdit*>()->text() };
-    QString column_name{ QObject::sender()->parent()->findChild<QComboBox*>()->currentText() };
-    int column_index = model->record().indexOf(column_name);
-    QFuture<QModelIndex> future = QtConcurrent::run(getSearchedItemIndex, this, column_index, value_to_find);
+    QList<QString> values_to_find;
+    QList<int> columns_indexes;
+    fillSearchedInfo(columns_indexes, values_to_find, QObject::sender()->parent() );
+    if(values_to_find.size() == 0)
+        return;
+
+    QFuture<QModelIndex> future = QtConcurrent::run(getSearchedItemIndex, this, columns_indexes, values_to_find);
     if(future.isValid())
     {
-        qDebug() << future.result().row() % rows_in_page;
         QObject::connect(this, &MainWindow::isPageChange, this,
             [this, future]()
             {
@@ -154,7 +164,8 @@ void MainWindow::search()
                 this->selectSearchedIndex(  future.result().row() % rows_in_page, future.result().column() );
             },
         Qt::QueuedConnection);
-        changePage(static_cast<int>(future.result().row() / rows_in_page) );// Получаем номер страницы, на которой находится нужная строка
+        int page_index = (future.result().row() > rows_in_page) ? static_cast<int>(future.result().row() / rows_in_page) : 1;
+        changePage( page_index );
     }
 }
 
@@ -173,11 +184,34 @@ void MainWindow::createFilter()
     proxy_model->setSourceModel( page_model );
     view->setModel(proxy_model);
 
-    QObject::connect(filter_wgt, &FilterWidget::isInAllPage, this, &MainWindow::filterSearchState);
     QObject::connect(filter_wgt, &FilterWidget::clearFiltersEffects, proxy_model, &MultiSortFilterProxyModel::clearFilters);
-    QObject::connect(this,       SIGNAL(preparedModel(QSqlTableModel)), filter_wgt, SLOT(updateColumns(QSqlTableModel)));
+    QObject::connect(this,       SIGNAL(preparedModel(QSqlQueryModel)), filter_wgt, SLOT(updateColumns(QSqlQueryModel)));
     QObject::connect(filter_btn, SIGNAL(clicked(bool)),                 this,       SLOT(getPreparedModel()));
     QObject::connect(filter_btn, SIGNAL(clicked(bool)),                 filter_wgt, SLOT(show()));
+    QObject::connect(this, &QMainWindow::destroyed, filter_wgt, &FilterWidget::deleteLater);
+}
+
+void MainWindow::addLineToSearch(QLayout* layout, const QString& field_name_to_search)
+{
+    QWidget* input_data_line_wgt = new QWidget;
+    QHBoxLayout* input_data_layout = new QHBoxLayout;
+    input_data_line_wgt->setLayout(input_data_layout);
+
+    QLabel* column_name_lbl = new QLabel(field_name_to_search);
+    column_name_lbl->setObjectName(field_name_to_search);
+    input_data_layout->addWidget(column_name_lbl, 0, Qt::AlignLeft);
+
+    QLineEdit* input_search_data = new QLineEdit;
+    input_data_layout->addWidget(input_search_data, 0, Qt::AlignCenter);
+
+    QCheckBox* box = new QCheckBox;
+    input_data_layout->addWidget(box, 0, Qt::AlignRight);
+    QLabel* lbl = new QLabel("Включить в поиск");
+    input_data_layout->addWidget(lbl);
+
+    QObject::connect(input_search_data, &QLineEdit::editingFinished, box, [box, input_search_data](){ box->setChecked(input_search_data->text().length() > 0); } );
+
+    layout->addWidget(input_data_line_wgt);
 }
 
 void MainWindow::createSearch()
@@ -190,23 +224,21 @@ void MainWindow::createSearch()
 
     QWidget* search_input_data_wgt = new QWidget;
     search_input_data_wgt->setObjectName("SearchInputDataWidget");
-    QHBoxLayout* search_layout = new QHBoxLayout;
-    search_input_data_wgt->setLayout(search_layout);
-
-    QComboBox* box = new QComboBox;
-    for(int i = 0; i < model->columnCount(); ++i)
-        box->addItem( model->record().fieldName(i) );
-
-    search_layout->addWidget(box);
-    QLineEdit* input_search_data = new QLineEdit;
-    search_layout->addWidget(input_search_data);
+    QVBoxLayout* search_data_layout = new QVBoxLayout;
+    search_input_data_wgt->setLayout(search_data_layout);
 
     QPushButton* find_btn = new QPushButton("Find");
     search_btn->setObjectName("FindBtn");
-    search_layout->addWidget(find_btn);
+    search_data_layout->addWidget(find_btn);
+
+    for(int i = 0; i < page_model->columnCount(); ++i)
+    {
+        addLineToSearch(search_data_layout, page_model->record().fieldName(i));
+    }
 
     QObject::connect(search_btn, &QPushButton::clicked, search_input_data_wgt, &QWidget::show);
     QObject::connect(find_btn,   &QPushButton::clicked, this, &MainWindow::search );
+    QObject::connect(this,       &QMainWindow::destroyed, search_input_data_wgt, &QWidget::deleteLater);
 }
 
 void MainWindow::createToolBar()
@@ -229,10 +261,9 @@ void MainWindow::addWidgetsToMainTab(QWidget* wgt)
     QTableView* page = new QTableView;
     page->setObjectName("MainPageView");
     wgt_layout->addWidget(page);
-    page_model = new QSqlQueryModel;
     page->setModel(page_model);
 
-    QLineEdit* cur_page = new QLineEdit("0");
+    QLineEdit* cur_page = new QLineEdit("1");
     QLabel* pages_cnt = new QLabel;
 
     pages_cnt->setObjectName("PagesCountLabel");
@@ -282,7 +313,7 @@ void MainWindow::createTabes()
 
 void MainWindow::fillMainTab(const QString &table_name)
 {
-    QSqlQuery sqlQ("SELECT COUNT(*) FROM " + table_name, getDB(db_name));
+    QSqlQuery sqlQ("SELECT COUNT(*) FROM " + table_name, getDB(db_name)); // Сделать потоком
     if(!sqlQ.next())
     {
         qDebug() << "Can't fill main page";
@@ -292,26 +323,17 @@ void MainWindow::fillMainTab(const QString &table_name)
     int rows = sqlQ.value(0).toInt();
     int pages = ( ( rows - 1) / rows_in_page ) + 1; // Деление с округлением вверх
     emit pagesCount( QString::number(pages) );
-    page_model->setQuery(getCurrentPageData(0, rows_in_page));
-}
-
-void MainWindow::filterSearchState(bool in_all_page)
-{
-    if(in_all_page)
-        proxy_model->setSourceModel(model);
-    else
-        proxy_model->setSourceModel(page_model);
 }
 
 void MainWindow::changePage(int index_page)
 {
     QLineEdit* curr_page_line_edit = this->findChild<QLineEdit*>("CurrentPageIndexLineEdit");
-    if(!curr_page_line_edit && curr_page_line_edit->text().toInt() == index_page)
+    if(!curr_page_line_edit && curr_page_line_edit->text().toInt() == index_page) // Переделать
         return;
 
     QLabel* page_cnt_lbl = this->findChild<QLabel*>("PagesCountLabel");
     int max_page = page_cnt_lbl->text().toInt();
-    if(index_page >= 0 && index_page <= max_page)
+    if(index_page > 0 && index_page <= max_page) // Переделать
     {
         QFuture<QSqlQuery> future = QtConcurrent::run(getCurrentPageData, this, index_page, rows_in_page);
         if(future.isValid())
@@ -324,7 +346,7 @@ void MainWindow::changePage(int index_page)
 }
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), windows{new QTabWidget}, model{nullptr}, page_model{nullptr}, proxy_model{nullptr},
+    : QMainWindow(parent), windows{new QTabWidget}, page_model{nullptr}, proxy_model{nullptr},
     filter_wgt{nullptr}, rows_in_page{20}, db_name{"C:\\UserDataBase\\study_db.db"}
 {
     this->thread()->setObjectName("MainThread");

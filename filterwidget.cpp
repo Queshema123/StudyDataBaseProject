@@ -102,17 +102,12 @@ FilterWidget::FilterWidget(QWidget* parent) : QWidget{parent}
 
     main_layout->addWidget(filters_wgt);
 
-    addActionsBtns(btns_layout, "addFilterBtn",    "Add filter"    );
+    //addActionsBtns(btns_layout, "addFilterBtn",    "Add filter"    );
     addActionsBtns(btns_layout, "submitFilterBtn", "Submit filter" );
     addActionsBtns(btns_layout, "clearFiltersBtn", "Clear filters" );
-    QObject::connect(this->findChild<QPushButton*>("addFilterBtn"),    SIGNAL(clicked(bool)), this, SLOT(addFilter()));
+    // QObject::connect(this->findChild<QPushButton*>("addFilterBtn"),    SIGNAL(clicked(bool)), this, SLOT(addFilter()));
     QObject::connect(this->findChild<QPushButton*>("submitFilterBtn"), SIGNAL(clicked(bool)), this, SLOT(submitChooseFilters()));
     QObject::connect(this->findChild<QPushButton*>("clearFiltersBtn"), SIGNAL(clicked(bool)), this, SIGNAL(clearFiltersEffects()));
-    QLabel* lbl = new QLabel("In all page ");
-    btns_layout->addWidget(lbl);
-    QCheckBox* check_box = new QCheckBox;
-    btns_layout->addWidget(check_box);
-    QObject::connect(check_box, &QCheckBox::toggled, this, &FilterWidget::isInAllPage );
 }
 
 void FilterWidget::addFilter()
@@ -150,7 +145,7 @@ void FilterWidget::deleteFilter()
     }
 }
 
-void FilterWidget::updateColumns(const QSqlTableModel& model)
+void FilterWidget::updateColumns(const QSqlQueryModel& model)
 {
     columns_names_indexes.clear();
     column_type.clear();

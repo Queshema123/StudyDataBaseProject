@@ -17,7 +17,6 @@ class MainWindow : public QMainWindow
 {
     Q_OBJECT
     QTabWidget* windows;
-    QSqlTableModel* model;
     QSqlQueryModel* page_model;
     MultiSortFilterProxyModel* proxy_model;
     FilterWidget* filter_wgt;
@@ -27,12 +26,15 @@ class MainWindow : public QMainWindow
 
     QSqlDatabase getDB(const QString& db_name);
     QSqlQuery getCurrentPageData(int page_index, int rows_in_page);
-    QModelIndex getSearchedItemIndex(int column_index, const QString &finding_value);
+    QModelIndex getSearchedItemIndex(const QList<int> &columns_indexex, const QList<QString> &finding_values);
+    bool isRightRow(const QSqlRecord &row, const QList<int> &columns_indexes, const QList<QString> &finding_values);
 
     void prepareModel();
     void hideColumns(QTableView* view);
     void addTableView(const QString& object_name, QLayout* layout, const QVector<QString>& column_to_show = {});
     QPushButton* addBtn(QLayout* layout, const QString &object_name, const QString &style_sheet);
+    void addLineToSearch(QLayout* layout, const QString& field_name_to_search);
+    void fillSearchedInfo(QList<int> &columns_indexes, QList<QString> &values_to_find, QObject* parent_wgt);
     void createMenu();
     void createFilter();
     void createSearch();
@@ -47,10 +49,9 @@ public:
     ~MainWindow();
 public slots:
     void getPreparedModel();
-    void filterSearchState(bool in_all_page);
     void selectSearchedIndex(int row, int column);
 signals:
-    void preparedModel(const QSqlTableModel& model);
+    void preparedModel(const QSqlQueryModel& model);
     void pagesCount(const QString& count);
     void createdFilter(MultiSortFilterProxyModel* filter);
     void currentPageData(const QSqlResult* result);
