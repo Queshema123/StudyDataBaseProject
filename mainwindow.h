@@ -54,7 +54,7 @@ public slots:
     void getPreparedModel();
     void selectSearchedIndex(int row, int column);
     void setFilters(const QMap<int, FilterWidget::CompareOperations> &operations, const QMap<int, QString> &values);
-    void clearFilters();
+    void setDefaultPage();
     void setPagesCount();
 signals:
     void preparedModel(const QSqlQueryModel& model);
@@ -64,6 +64,7 @@ signals:
 private slots:
     void setPageIndex(int page_index);
     void enableSwitchingBtns(bool block);
+    void changeTable(const QString &table_name);
 };
 
 #endif // MAINWINDOW_H

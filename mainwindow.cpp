@@ -25,6 +25,13 @@
 #include <thread>
 #include <memory>
 
+void MainWindow::changeTable(const QString &table_name)
+{
+    this->cur_table = table_name;
+    std::thread t(setDefaultPage, this);
+    t.join();
+}
+
 void MainWindow::enableSwitchingBtns(bool block)
 {
     this->findChild<QPushButton*>("prevPageBtn")->setEnabled(block);
@@ -74,7 +81,7 @@ QSqlQuery MainWindow::getCurrentPageData(int page_index, int rows_in_page, const
     QString f_row = QString::number(rows_in_page * (page_index - 1) );
     QString new_query = query;
     if(!query.contains("LIMIT"))
-        new_query += + " ORDER BY ID ASC LIMIT " + QString::number(rows_in_page) + " OFFSET " + f_row;
+        new_query += + " ORDER BY " + db.primaryIndex( cur_table ).fieldName(0) + " ASC LIMIT " + QString::number(rows_in_page) + " OFFSET " + f_row;
     else
     {
         new_query = query.mid( 0, query.indexOf("LIMIT") ) + " LIMIT " + QString::number(rows_in_page) + " OFFSET " + f_row;
@@ -160,9 +167,17 @@ QPushButton* MainWindow::addBtn(QLayout* layout, const QString &object_name, con
 void MainWindow::createMenu()
 {
     QMenuBar* menu = this->menuBar();
+    QMenu* application = menu->addMenu("Application");
+    QAction* user_table = new QAction("USER");
+    QAction* departament_table = new QAction("DEPARTAMENTS");
+    application->addAction(user_table);
+    application->addAction(departament_table);
+
     QMenu* administration_action = menu->addMenu("Administration");
     QAction* exit_action = menu->addAction("Exit");
-    QObject::connect(exit_action,  SIGNAL(triggered(bool)), this, SLOT(close()));
+    QObject::connect(exit_action,  &QAction::triggered, this, &MainWindow::close);
+    QObject::connect(user_table, &QAction::triggered, this, [this](bool) { changeTable("USER"); } );
+    QObject::connect(departament_table, &QAction::triggered, this, [this](bool) { changeTable("DEPARTAMENTS"); } );
 }
 
 void MainWindow::getPreparedModel()
@@ -243,14 +258,14 @@ void MainWindow::setFilters(const QMap<int, FilterWidget::CompareOperations> &op
     }
 }
 
-void MainWindow::clearFilters()
+void MainWindow::setDefaultPage()
 {
     QFuture<QSqlQuery> future = QtConcurrent::run(getCurrentPageData, this, 1, rows_in_page, QString("SELECT * FROM " + cur_table));
     if(future.isValid())
     {
         page_model->setQuery( future.takeResult() );
-        setPagesCount();
         changePage(1);
+        setPagesCount();
         emit isPageChange(1);
     }
 }
@@ -267,7 +282,7 @@ void MainWindow::createFilter()
     view->setModel(page_model);
 
     QObject::connect(filter_wgt, &FilterWidget::submitFilters,       this, &MainWindow::setFilters  );
-    QObject::connect(filter_wgt, &FilterWidget::clearFiltersEffects, this, &MainWindow::clearFilters);
+    QObject::connect(filter_wgt, &FilterWidget::clearFiltersEffects, this, &MainWindow::setDefaultPage);
     QObject::connect(this,       &MainWindow::preparedModel, filter_wgt, &FilterWidget::updateColumns);
     QObject::connect(filter_btn, SIGNAL(clicked(bool)),                 this,       SLOT(getPreparedModel()));
     QObject::connect(filter_btn, &QPushButton::clicked,                 filter_wgt, &FilterWidget::show);
