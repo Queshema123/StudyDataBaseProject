@@ -14,6 +14,13 @@
 #include <QPointer>
 #include <QtConcurrent>
 
+struct PageInfo
+{
+    QPointer<QSqlQueryModel> model;
+    QFuture<void> future;
+    PageInfo() : model{ new QSqlQueryModel } { }
+};
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -24,7 +31,7 @@ class MainWindow : public QMainWindow
     QString db_name;
     QString cur_table;
     enum class PageName{ Left, Center, Right, All};
-    QVector<QFuture<QSqlQuery>> pages;
+    QVector<PageInfo> pages;
     enum class Tabes {Main, Phone, Names};
 
     QSqlDatabase getDB(const QString& db_name);
