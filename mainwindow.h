@@ -9,9 +9,10 @@
 #include <QSqlResult>
 #include <QPushButton>
 #include "filterwidget.h"
-#include <memory>
-#include <thread>
-#include <vector>
+#include <QVector>
+#include <QSqlQuery>
+#include <QPointer>
+#include <QtConcurrent>
 
 class MainWindow : public QMainWindow
 {
@@ -23,7 +24,7 @@ class MainWindow : public QMainWindow
     QString db_name;
     QString cur_table;
     enum class PageName{ Left, Center, Right, All};
-    std::vector<std::unique_ptr<std::thread>> pages_threads;
+    QVector<QFuture<QSqlQuery>> pages;
     enum class Tabes {Main, Phone, Names};
 
     QSqlDatabase getDB(const QString& db_name);
@@ -33,7 +34,6 @@ class MainWindow : public QMainWindow
     bool isRightRow(const QSqlRecord &row, const QList<int> &columns_indexes, const QList<QString> &finding_values);
     QPushButton* addBtn(QLayout* layout, const QString &object_name, const QString &style_sheet, const QString &view);
 
-    void prepareModel();
     void hideColumns(QTableView* view);
     void addTableView(const QString& object_name, QLayout* layout, const QVector<QString>& column_to_show = {});
     void addLineToSearch(QLayout* layout, const QString& field_name_to_search);
@@ -47,6 +47,7 @@ class MainWindow : public QMainWindow
     void search();
     void changePage(int index_page);
     void connectPagesThreads();
+    void fillModels(PageName page, int index);
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();

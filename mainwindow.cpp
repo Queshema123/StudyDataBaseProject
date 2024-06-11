@@ -24,6 +24,7 @@
 #include <QFuture>
 #include <thread>
 #include <memory>
+#include <algorithm>
 
 void MainWindow::changeTable(const QString &table_name)
 {
@@ -62,13 +63,14 @@ void MainWindow::setPageIndex(int page_index)
 
 QSqlDatabase MainWindow::getDB(const QString& db_name)
 {
-    QString connect_name = QThread::currentThread()->objectName();
+    static std::atomic<int> id = 1;
+    QString connect_name = QThread::currentThread()->objectName() + QString::number(++id);
     if(QSqlDatabase::contains(connect_name))
     {
         return QSqlDatabase::database(connect_name);
     }
     QSqlDatabase db;
-    db = QSqlDatabase::addDatabase("QSQLITE");
+    db = QSqlDatabase::addDatabase("QSQLITE", connect_name);
     db.setDatabaseName(db_name);
     if(!db.isValid() || !db.open())
         qDebug() << "DB connection creation error!";
@@ -81,7 +83,7 @@ QSqlQuery MainWindow::getCurrentPageData(int page_index, int rows_in_page, const
     QString f_row = QString::number(rows_in_page * (page_index - 1) );
     QString new_query = query;
     if(!query.contains("LIMIT"))
-        new_query += + " ORDER BY " + db.primaryIndex( cur_table ).fieldName(0) + " ASC LIMIT " + QString::number(rows_in_page) + " OFFSET " + f_row;
+        new_query += " ORDER BY " + db.primaryIndex( cur_table ).fieldName(0) + " ASC LIMIT " + QString::number(rows_in_page) + " OFFSET " + f_row;
     else
     {
         new_query = query.mid( 0, query.indexOf("LIMIT") ) + " LIMIT " + QString::number(rows_in_page) + " OFFSET " + f_row;
@@ -122,12 +124,6 @@ QPair<int, int> MainWindow::getSearchedItemIndex(const QList<int> &columns_index
         }
     }
     return QPair<int, int>();
-}
-
-void MainWindow::prepareModel()
-{
-    page_model = new QSqlQueryModel;
-    page_model->setQuery(getCurrentPageData(1, rows_in_page));
 }
 
 void MainWindow::hideColumns(QTableView* view)
@@ -417,68 +413,110 @@ void MainWindow::createTabes()
 
 void MainWindow::changePage(int index_page)
 {
-    QFuture<QSqlQuery> future = QtConcurrent::run(getCurrentPageData, this, index_page, rows_in_page, page_model->query().lastQuery());
-    if(future.isValid())
+    page_model->setQuery( getCurrentPageData(index_page, rows_in_page, page_model->query().lastQuery()) );
+    emit isPageChange(index_page);
+}
+
+void MainWindow::fillModels(PageName page, int index)
+{
+    auto fillModel = [this](int page_index)
     {
-        page_model->setQuery( future.takeResult() );
-        emit isPageChange( index_page );
+        return getCurrentPageData(page_index, rows_in_page, page_model->query().lastQuery());
+    };
+    int thread_idx = static_cast<int>(page);
+    switch (page) {
+    case PageName::Left:
+        pages[thread_idx] = QtConcurrent::run(fillModel, index-1);
+        break;
+    case PageName::Right:
+        pages[thread_idx] = QtConcurrent::run(fillModel, index+1);
+        break;
+    default:
+        thread_idx = static_cast<int>(PageName::Center);
+
+        pages[thread_idx-1] = QtConcurrent::run(fillModel, index-1);
+        pages[thread_idx]   = QtConcurrent::run(fillModel, index  );
+        pages[thread_idx+1] = QtConcurrent::run(fillModel, index+1);
+        break;
     }
 }
 
 void MainWindow::connectPagesThreads()
 {
-    QLineEdit* cur_page_index = this->findChild<QLineEdit*>("CurrentPageIndexLineEdit");
+    QLineEdit* cur_page_index_line = this->findChild<QLineEdit*>("CurrentPageIndexLineEdit");
     QPushButton* prev_btn = this->findChild<QPushButton*>("prevPageBtn");
     QPushButton* next_btn = this->findChild<QPushButton*>("nextPageBtn");
     QObject::connect(this, &MainWindow::isPageChange, this, [this](){ emit isEnableSwitchingBtns(true);} );
 
-    auto change_page_func = [this, cur_page_index]()
+    auto change_page_func = [this](int thread_idx)
     {
-        emit isEnableSwitchingBtns(false); // Здесь блокируются кнопки
-        int page_idx = cur_page_index->text().toInt();
-        changePage(page_idx);
+        page_model->setQuery( pages[thread_idx].takeResult());
+        windows->currentWidget()->findChild<QTableView*>()->setModel(page_model);
+        emit isEnableSwitchingBtns(true); // Здесь разблокируются кнопки
     };
 
-    QObject::connect(prev_btn, &QPushButton::clicked,       this,   [this, change_page_func, cur_page_index]()
+    QObject::connect(prev_btn, &QPushButton::clicked,       this,   [this, change_page_func, cur_page_index_line]()
         {
-            int left = static_cast<int>(PageName::Left);
-            QString page_index =  QString::number( cur_page_index->text().toInt() - 1 ) ;
+            // Валидация номера страницы
+            QString page_index =  QString::number( cur_page_index_line->text().toInt() - 1 ) ;
             int pos = 0;
-            if(cur_page_index->validator()->validate(page_index, pos) != QValidator::Acceptable)
+            if(cur_page_index_line->validator()->validate(page_index, pos) != QValidator::Acceptable)
                 return;
-            cur_page_index->setText( page_index );
-            pages_threads[left] = std::make_unique<std::thread>( change_page_func);
-            pages_threads[left].release()->detach();
-        },
-        Qt::QueuedConnection
-    );
-    QObject::connect(next_btn, &QPushButton::clicked,       this,   [this, change_page_func, cur_page_index]()
-        {
-            int right = static_cast<int>(PageName::Right);
-            QString page_index =  QString::number( cur_page_index->text().toInt() + 1 ) ;
-            int pos = 0;
-            if(cur_page_index->validator()->validate(page_index, pos) != QValidator::Acceptable)
-                return;
-            cur_page_index->setText( page_index );
+            cur_page_index_line->setText( page_index );
 
-            pages_threads[right] = std::make_unique<std::thread>( change_page_func);
-            pages_threads[right].release()->detach();
+            int left = static_cast<int>(PageName::Left);
+            emit isEnableSwitchingBtns(false); // Здесь блокируются кнопки
+            pages[left].model.waitForFinished();
+
+            std::swap( pages[left+1], pages[left+2] );
+            std::swap( pages[left], pages[left+1] );
+
+            change_page_func( static_cast<int>(PageName::Center) );
+
+            fillModels(PageName::Left, page_index.toInt());
+            fillModels(PageName::Center, page_index.toInt());
         },
         Qt::QueuedConnection
     );
-    QObject::connect(cur_page_index, &QLineEdit::returnPressed, this, [this, change_page_func, cur_page_index]()
+    QObject::connect(next_btn, &QPushButton::clicked,       this,   [this, change_page_func, cur_page_index_line]()
         {
-            int center = static_cast<int>(PageName::Center);
-            pages_threads[center] = std::make_unique<std::thread>( change_page_func);
-            pages_threads[center].release()->detach();
+            // Валидация номера страницы
+            QString page_index =  QString::number( cur_page_index_line->text().toInt() + 1 ) ;
+            int pos = 0;
+            if(cur_page_index_line->validator()->validate(page_index, pos) != QValidator::Acceptable)
+                return;
+            cur_page_index_line->setText( page_index );
+
+
+            int right = static_cast<int>(PageName::Right);
+            emit isEnableSwitchingBtns(false); // Здесь блокируются кнопки
+            pages[right].waitForFinished();
+
+            std::swap( pages[right-1], pages[right-2] );
+            std::swap( pages[right], pages[right-1] );
+
+            change_page_func( static_cast<int>(PageName::Center) );
+
+            fillModels(PageName::Right, page_index.toInt());
+            fillModels(PageName::Center, page_index.toInt()); // Создается еще раз поскольку QSqlQuery можно только переместить, а не скопировать. Поскольку перемещаем в page_model результат, то
+        },
+        Qt::QueuedConnection
+    );
+    QObject::connect(cur_page_index_line, &QLineEdit::returnPressed, this, [this, change_page_func, cur_page_index_line]()
+        {
+            emit isEnableSwitchingBtns(false); // Здесь блокируются кнопки
+            int page_index = cur_page_index_line->text().toInt();
+            fillModels(PageName::All, page_index);
+            pages[ static_cast<int>(PageName::Center) ].model.waitForFinished();
+            changePage(page_index);
         },
         Qt::QueuedConnection
     );
 }
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), windows{new QTabWidget}, page_model{nullptr},
-    filter_wgt{nullptr}, rows_in_page{20}, db_name{"C:\\UserDataBase\\study_db.db"}, cur_table{"USER"}, pages_threads{static_cast<int>(PageName::All)}
+    : QMainWindow(parent), windows{new QTabWidget}, page_model{ new QSqlQueryModel },
+    filter_wgt{nullptr}, rows_in_page{20}, db_name{"C:\\UserDataBase\\study_db.db"}, cur_table{"USER"}, pages{static_cast<int>(PageName::All)}
 {
     this->thread()->setObjectName("MainThread");
     QHBoxLayout* main_layout = new QHBoxLayout;
@@ -490,7 +528,7 @@ MainWindow::MainWindow(QWidget *parent)
     this->setCentralWidget(main_wgt);
 
     createTabes();
-    prepareModel();
+    page_model->setQuery(getCurrentPageData(1, rows_in_page));
 
     addTableView("PhonesTableView", this->findChild<QWidget*>("PhonesPage")->layout(), {"PHONE_NUMBER"} );
     addTableView("NamesTableView",  this->findChild<QWidget*>("NamesPage")->layout(),  {"NAME"} );
@@ -499,6 +537,7 @@ MainWindow::MainWindow(QWidget *parent)
     createToolBar();
 
     setPagesCount();
+    fillModels(PageName::All, 1);
     connectPagesThreads();
 
     windows->setCurrentIndex( static_cast<int>(Tabes::Main) );
