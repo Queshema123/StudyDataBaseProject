@@ -10,15 +10,19 @@ CONFIG += c++17
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
+    db_functions.cpp \
     filterwidget.cpp \
     main.cpp \
     mainwindow.cpp \
-    multisortfilterproxymodel.cpp
+    multisortfilterproxymodel.cpp \
+    tab.cpp
 
 HEADERS += \
+    db_functions.h \
     filterwidget.h \
     mainwindow.h \
-    multisortfilterproxymodel.h
+    multisortfilterproxymodel.h \
+    tab.h
 
 FORMS += \
     mainwindow.ui

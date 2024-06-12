@@ -29,6 +29,8 @@ QString FilterWidget::getStringOperationCondition(CompareOperations operation, c
         return getOperationSQLView(operation) + " '%" + value + "%'";
     case CompareOperations::EndsWith:
         return getOperationSQLView(operation) + " '%" + value + "' ";
+    case CompareOperations::Empty:
+        return getOperationSQLView(operation) + " '" + value + "' ";
     default:
         qDebug() << "Compare operation isn't a string opearation!";
         return "";
@@ -56,6 +58,10 @@ QString FilterWidget::getOperationView(CompareOperations op)
         return "<>";
     case CompareOperations::StartsWith:
         return "начинается с";
+    case CompareOperations::Empty:
+        return "пусто";
+    case CompareOperations::Unable:
+        return "выключить";
     default:
         qDebug() << "Unknown operation in getOperationView";
         return "?";
@@ -69,6 +75,8 @@ QString FilterWidget::getOperationSQLView(CompareOperations op)
     case CompareOperations::Contains:
     case CompareOperations::EndsWith:
         return "LIKE";
+    case CompareOperations::Empty:
+        return "=";
     default:
         return getOperationView(op);
     }
@@ -78,7 +86,7 @@ QString FilterWidget::getSQLCondition(CompareOperations op, const QString &value
 {
     switch (getTypeOfField(op)) {
     case FieldType::Number:
-        return field + " " + getOperationSQLView(op) + " " + value;
+        return field + " " + getOperationSQLView(op) + " '" + value + "' ";
     case FieldType::String:
         return field + " " + getStringOperationCondition(op, value);
     default:
@@ -144,28 +152,23 @@ void FilterWidget::fillListOfOperations(QComboBox* box, FieldType type)
 
 void FilterWidget::fillFilterInfo()
 {
-    QList<QWidget*> wgts = this->findChild<QWidget*>("FiltersWidget")->findChildren<QWidget*>();
+    QList<QWidget*> wgts = this->findChild<QWidget*>("FiltersWidget")->findChildren<QWidget*>("FilterLineWidget");
     for(auto wgt : wgts)
     {
-        if(!wgt)
-            continue;
-        if(QString("QWidget") != wgt->metaObject()->className())
-            continue;
-        QCheckBox* box = wgt->findChild<QCheckBox*>();
-        if(!box || !box->isChecked())
+        CompareOperations operation = static_cast<CompareOperations>( wgt->findChild<QComboBox*>("OperationsComboBox")->currentData().toInt() );
+        if(operation == CompareOperations::Unable)
             continue;
         int col_ind = wgt->findChild<QComboBox*>("ColumnsComboBox")->currentData().toInt();
-        CompareOperations operation = static_cast<CompareOperations>( wgt->findChild<QComboBox*>("OperationsComboBox")->currentData().toInt() );
         QString value = wgt->findChild<QLineEdit*>()->text();
-        index_operation.insert(col_ind, operation);
-        index_value.insert(col_ind, value);
+        info.append( Info(col_ind, operation, value) );
     }
 }
 
 void FilterWidget::submitChooseFilters()
 {
+    info.clear();
     fillFilterInfo();
-    emit submitFilters(index_operation, index_value);
+    emit submitFilters(info);
 }
 
 FilterWidget::FilterWidget(QWidget* parent) : QWidget{parent}
@@ -184,8 +187,8 @@ FilterWidget::FilterWidget(QWidget* parent) : QWidget{parent}
     main_layout->addWidget(filters_wgt);
 
     //addActionsBtns(btns_layout, "addFilterBtn",    "Add filter"    );
-    addActionsBtns(btns_layout, "submitFilterBtn", "Submit filter" );
-    addActionsBtns(btns_layout, "clearFiltersBtn", "Clear filters" );
+    addActionsBtns(btns_layout, "submitFilterBtn", "Submit" );
+    addActionsBtns(btns_layout, "clearFiltersBtn", "Clear" );
     // QObject::connect(this->findChild<QPushButton*>("addFilterBtn"),    &QPushButton::clicked, this, SLOT(addFilter()));
     QObject::connect(this->findChild<QPushButton*>("submitFilterBtn"), &QPushButton::clicked, this, &FilterWidget::submitChooseFilters);
     QObject::connect(this->findChild<QPushButton*>("clearFiltersBtn"), &QPushButton::clicked, this, &FilterWidget::clearFiltersEffects);
@@ -197,6 +200,7 @@ void FilterWidget::addFilter(const QString &field, const QString &type)
     QHBoxLayout* filter_layout = new QHBoxLayout;
     QWidget* filter_wgt = new QWidget( this->findChild<QWidget*>("FiltersWidget") );
     filter_wgt->setLayout(filter_layout);
+    filter_wgt->setObjectName("FilterLineWidget");
     this->findChild<QLayout*>("FiltersLayout")->addWidget(filter_wgt);
 
     QComboBox* col_list = new QComboBox;
@@ -204,19 +208,15 @@ void FilterWidget::addFilter(const QString &field, const QString &type)
     QComboBox* op_list = new QComboBox;
     op_list->setObjectName("OperationsComboBox");
     QLineEdit* input_line = new QLineEdit;
+
     // QPushButton* delete_btn = new QPushButton("Delete filter");
-    QCheckBox* box = new QCheckBox;
-    QLabel* lbl = new QLabel("включить фильтр");
     filter_layout->addWidget(col_list, 0, Qt::AlignLeft);
     filter_layout->addWidget(op_list, 0, Qt::AlignLeft);
     filter_layout->addWidget(input_line, 0, Qt::AlignRight);
     // filter_layout->addWidget(delete_btn, 0, Qt::AlignRight);
-    filter_layout->addWidget(lbl, 0, Qt::AlignRight);
-    filter_layout->addWidget(box, 0, Qt::AlignRight);
 
     col_list->addItem(field, index_column_name.key(field));
     fillListOfOperations( op_list, getTypeOfField(type) );
-    QObject::connect(input_line, &QLineEdit::editingFinished, box, [box, input_line](){ box->setChecked(input_line->text().length() > 0); } );
     // QObject::connect(delete_btn, SIGNAL(clicked(bool)), this, SLOT(deleteFilter()));
 }
 
@@ -244,6 +244,7 @@ void FilterWidget::deleteFilterWidgets()
 
 void FilterWidget::updateColumns(const QSqlQueryModel& model)
 {
+    info.clear();
     index_column_name.clear();
     deleteFilterWidgets();
     QSqlRecord record = model.record();
@@ -260,10 +261,5 @@ void FilterWidget::clearFilterWidgets()
     for(auto input_line : input_lines)
     {
         input_line->clear();
-    }
-    QList<QCheckBox*> boxes = this->findChild<QWidget*>("FiltersWidget")->findChildren<QCheckBox*>();
-    for(auto box : boxes)
-    {
-        box->setChecked(false);
     }
 }
