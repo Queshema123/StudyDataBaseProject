@@ -78,6 +78,11 @@ struct Info
     QVariant value;
     QString field_name;
     Info(int id, FilterWidget::CompareOperations op, const QVariant& val, const QString& field_name = "") : column_id{id}, operation{op}, value{val}, field_name{field_name} {}
+    bool operator==(const Info& other) const;
+    bool operator!=(const Info& other) const { return !(*this == other); }
 };
+
+bool operator ==(const QList<Info>& left, const QList<Info>& right);
+bool operator !=(const QList<Info>& left, const QList<Info>& right );
 
 #endif // FILTERWIDGET_H

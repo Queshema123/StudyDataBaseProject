@@ -165,9 +165,13 @@ void FilterWidget::fillFilterInfo()
 
 void FilterWidget::submitChooseFilters()
 {
+    info.clear();
     fillFilterInfo();
-    cached_info_for_tabs[current_tab] = info;
-    emit submitFilters(info);
+    if(cached_info_for_tabs[current_tab] != info)
+    {
+        cached_info_for_tabs[current_tab] = info;
+    }
+    emit submitFilters(cached_info_for_tabs[current_tab]);
 }
 
 FilterWidget::FilterWidget(QWidget* parent) : QWidget{parent}
@@ -187,10 +191,8 @@ FilterWidget::FilterWidget(QWidget* parent) : QWidget{parent}
 
     main_layout->addWidget(filters_wgt);
 
-    //addActionsBtns(btns_layout, "addFilterBtn",    "Add filter"    );
     addActionsBtns(btns_layout, "submitFilterBtn", "Submit" );
     addActionsBtns(btns_layout, "clearFiltersBtn", "Clear" );
-    // QObject::connect(this->findChild<QPushButton*>("addFilterBtn"),    &QPushButton::clicked, this, SLOT(addFilter()));
     QObject::connect(this->findChild<QPushButton*>("submitFilterBtn"), &QPushButton::clicked, this, &FilterWidget::submitChooseFilters);
     QObject::connect(this->findChild<QPushButton*>("clearFiltersBtn"), &QPushButton::clicked, this, &FilterWidget::clearFiltersEffects);
     QObject::connect(this, &FilterWidget::clearFiltersEffects, this, &FilterWidget::clearFilterWidgets);
@@ -265,14 +267,15 @@ void FilterWidget::updateColumns(const QSqlQueryModel& model)
         index_column_name.insert( i, record.fieldName(i) );
 
         if(cur_info == info.end())
-            addFilter( record.fieldName(i), record.field(i).metaType().name() );
-        else
         {
-            added_wgt = addFilter( cur_info->field_name, record.field(cur_info->field_name).metaType().name() );
-            added_wgt->findChild<QComboBox*>("OperationsComboBox")->setCurrentText( getOperationView(cur_info->operation) );
-            added_wgt->findChild<QLineEdit*>("InputValueLineEdit")->setText( cur_info->value.toString() );
-            ++cur_info;
+            addFilter( record.fieldName(i), record.field(i).metaType().name() );
+            continue;
         }
+
+        added_wgt = addFilter( cur_info->field_name, record.field(cur_info->field_name).metaType().name() );
+        added_wgt->findChild<QComboBox*>("OperationsComboBox")->setCurrentText( getOperationView(cur_info->operation) );
+        added_wgt->findChild<QLineEdit*>("InputValueLineEdit")->setText( cur_info->value.toString() );
+        ++cur_info;
     }
 }
 
@@ -315,3 +318,22 @@ bool FilterWidget::compareValues(CompareOperations op, const QVariant &left, con
         return false;
     }
 }
+
+bool Info::operator==(const Info& other) const
+{
+    return column_id == other.column_id && field_name == other.field_name && operation == other.operation && value == other.value;
+}
+
+bool operator ==(const QList<Info>& left, const QList<Info>& right)
+{
+    if(left.size() != right.size())
+        return false;
+    for(int i = 0; i < left.size(); ++i)
+    {
+        if(left[i] != right[i])
+            return false;
+    }
+    return true;
+}
+
+bool operator !=(const QList<Info>& left, const QList<Info>& right ) { return !(left == right); }
