@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QSqlQueryModel>
 #include <QVector>
+#include <QVariant>
 
 struct Info;
 
@@ -17,7 +18,7 @@ public:
     enum class FieldType{Number, String, Unknown};
     FilterWidget(QWidget* parent = nullptr);
 public slots:
-    void addFilter(const QString &field, const QString &type);
+    QWidget* addFilter(const QString &field, const QString &type);
     void deleteFilter();
     void updateColumns(const QSqlQueryModel& model);
     static QString getStringOperationCondition(CompareOperations operation, const QString &value);
@@ -26,8 +27,9 @@ public slots:
     static QString getSQLCondition(CompareOperations op, const QString &value, const QString &field);
     static FieldType getTypeOfField(const QString& field_type);
     static FieldType getTypeOfField(CompareOperations operation);
+    static bool compareValues(CompareOperations op, const QVariant &left, const QVariant &right);
 signals:
-    void submitFilters(const QVector<Info>& info);
+    void submitFilters(const QVector<Info>& other_info);
     void clearFiltersEffects();
 private slots:
     void submitChooseFilters();
@@ -57,20 +59,25 @@ private:
     };
     static const QMap<QString, FieldType> field_and_type;
 
-    QMap<int, QString> index_column_name;
-    QVector<Info> info;
     void addActionsBtns(QLayout* layout, const QString& object_name, const QString& view);
     void fillListOfColumns(QComboBox* box);
     void fillListOfOperations(QComboBox* box, FieldType type);
     void fillFilterInfo();
+    void fillWidgets();
+protected:
+    QMap<int, QString> index_column_name;
+    QVector<Info> info;
+    QHash<QObject*, QVector<Info>> cached_info_for_tabs;
+    QObject* current_tab;
 };
 
 struct Info
 {
     int column_id;
     FilterWidget::CompareOperations operation;
-    QString value;
-    Info(int id, FilterWidget::CompareOperations op, const QString& val) : column_id{id}, operation{op}, value{val} {}
+    QVariant value;
+    QString field_name;
+    Info(int id, FilterWidget::CompareOperations op, const QVariant& val, const QString& field_name = "") : column_id{id}, operation{op}, value{val}, field_name{field_name} {}
 };
 
 #endif // FILTERWIDGET_H

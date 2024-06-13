@@ -15,20 +15,21 @@
 #include <mutex>
 
 #include "filterwidget.h"
+#include "searchwidget.h"
 #include "tab.h"
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
+
     QTabWidget* windows;
     Tab* cur_tab;
     FilterWidget* filter_wgt;
-    FilterWidget* search_wgt;
+    SearchWidget* search_wgt;
     int rows_in_page;
     QString db_name;
     QString cur_table;
 
-    std::mutex tabes_mutex;
     QVector<QPointer<Tab>> tabes;
 
     QPair<int, int> getSearchedItemIndex(const QVector<Info>& info);
@@ -46,12 +47,7 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
-public slots:
-    void selectSearchedIndex(int row, int column);
 signals:
-    void preparedModel(const QSqlQueryModel& model);
-    void pagesCount(const QString& count);
-    void isPageChange(int page_index);
     void isEnableSwitchingBtns(bool block);
 private slots:
     void setPageIndex(int page_index);

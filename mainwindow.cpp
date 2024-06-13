@@ -44,7 +44,9 @@ bool MainWindow::isRightRow(const QSqlRecord &row, const QVector<Info>& info)
 {
     for(int i = 0; i < info.size(); ++i)
     {
-        if( row.value(info[i].column_id).toString() != info[i].value )
+        if(info[i].operation == FilterWidget::CompareOperations::Unable)
+            continue;
+        if( !FilterWidget::compareValues(info[i].operation, row.value(info[i].column_id), info[i].value) )
             return false;
     }
     return true;
@@ -54,7 +56,6 @@ QPair<int, int> MainWindow::getSearchedItemIndex(const QVector<Info>& info)
 {// Не может знать о других записях по скольку хранит только 20, добавить поток, который вернет модель со всеми строками (без LIMIT OFFSET)
     QString sqlQ = cur_tab->getCurrentModel()->query().lastQuery();
     sqlQ = sqlQ.mid(0, sqlQ.indexOf("LIMIT"));
-
     auto get_query = [sqlQ, this]() ->QSqlQuery
     {
         return QSqlQuery(sqlQ, getDB(db_name));
@@ -94,31 +95,24 @@ void MainWindow::createMenu()
     QAction* exit_action = menu->addAction("Exit");
     QObject::connect(exit_action,  &QAction::triggered, this, &MainWindow::close);
     QObject::connect(exit_action,  &QAction::triggered, filter_wgt, &FilterWidget::deleteLater);
-    QObject::connect(exit_action,  &QAction::triggered, search_wgt, &FilterWidget::deleteLater);
+    QObject::connect(exit_action,  &QAction::triggered, search_wgt, &SearchWidget::deleteLater);
     QObject::connect(user_table, &QAction::triggered, this, [this](bool)
     {
-        std::lock_guard<std::mutex> lock(tabes_mutex);
         windows->setCurrentWidget( addTab("UserTab", "User", "USER") );
-        tabes.last()->changePage(1);
         cur_tab = tabes.last().get();
-        emit cur_tab->preparedModel( *cur_tab->getCurrentModel() );
+        cur_tab->emitCurrentPage();
+        cur_tab->emitPagesCount();
+        cur_tab->emitCurrentPageInfo();
     }
     );
     QObject::connect(departament_table, &QAction::triggered, this, [this](bool)
     {
-        std::lock_guard<std::mutex> lock(tabes_mutex);
         windows->setCurrentWidget( addTab("DepartamentTab", "Departament", "DEPARTAMENTS") );
-        tabes.last()->changePage(1);
         cur_tab = tabes.last().get();
-        emit cur_tab->preparedModel( *cur_tab->getCurrentModel() );
+        cur_tab->emitCurrentPage();
+        cur_tab->emitPagesCount();
+        cur_tab->emitCurrentPageInfo();
     }
-    );
-}
-
-void MainWindow::selectSearchedIndex(int row, int column)
-{
-    cur_tab->getModeliew()->selectionModel()->select(
-        cur_tab->getCurrentModel()->index(row, column),  QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows
     );
 }
 
@@ -128,9 +122,10 @@ void MainWindow::search(const QVector<Info>& info)
     future.waitForFinished();
     // Находим остаток от деления, поскольку номер строки найденного индекса соответствует индексу для модели, которая содержит все записи из бд
     // row() - номер строки в моделе со всеми записями, row() % rows_in_page - номер строки в моделе с 25 записями
-    this->selectSearchedIndex(  future.result().first % rows_in_page, future.result().second );
     int page_index = (future.result().first > rows_in_page) ? std::ceil( (double)future.result().first / rows_in_page) : 1; // int на int делится поэтому пришлось кастить к double для округления
     cur_tab->changePage(page_index);
+    qDebug() << page_index << future.result();
+    cur_tab->selectSearchedIndex(future.result().first % rows_in_page, future.result().second);
 }
 
 void MainWindow::createFilter()
@@ -142,7 +137,6 @@ void MainWindow::createFilter()
     filter_btn->setObjectName("FilterBtn");
     toolbar->addWidget(filter_btn);
 
-    QObject::connect(this,       &MainWindow::preparedModel,         filter_wgt, &FilterWidget::updateColumns);
     QObject::connect(filter_btn, &QPushButton::clicked,              filter_wgt, &FilterWidget::show);
 }
 
@@ -154,19 +148,17 @@ void MainWindow::createSearch()
     search_btn->setObjectName("SearchBtn");
     toolbar->addWidget(search_btn);
 
-    search_wgt = new FilterWidget;
-    search_wgt->setObjectName("SearchWidget");
+    search_wgt = new SearchWidget;
 
-    QObject::connect(search_btn, &QPushButton::clicked,        search_wgt, &QWidget::show);
-    QObject::connect(search_wgt, &FilterWidget::submitFilters, this, &MainWindow::search );
-    QObject::connect(this, &MainWindow::preparedModel, search_wgt, &FilterWidget::updateColumns);
+    QObject::connect(search_btn, &QPushButton::clicked,       search_wgt, &SearchWidget::show);
+    QObject::connect(search_wgt, &SearchWidget::submitFilters, this, &MainWindow::search );
 }
 
 void MainWindow::createChangePageWgts()
 {
     QToolBar* toolbar = this->findChild<QToolBar*>("MainToolBar");
     QLineEdit* cur_page = new QLineEdit("1");
-    QLabel* pages_cnt = new QLabel;
+    QLabel* pages_cnt = new QLabel("1");
 
     pages_cnt->setObjectName("PagesCountLabel");
     cur_page->setObjectName("CurrentPageIndexLineEdit");
@@ -174,10 +166,10 @@ void MainWindow::createChangePageWgts()
     pages_cnt->setMaximumWidth(25);
 
     QHBoxLayout* btns_layout = new QHBoxLayout;
-    addBtn(btns_layout, "prevPageBtn", "width: 50;", "prev")->setMaximumWidth(50);
+    addBtn(btns_layout, "prevPageBtn", " ", "prev")->setMaximumWidth(50);
     btns_layout->addWidget(cur_page);
     btns_layout->addWidget(pages_cnt);
-    addBtn(btns_layout, "nextPageBtn", "width: 50;", "next")->setMaximumWidth(50);
+    addBtn(btns_layout, "nextPageBtn", " ", "next")->setMaximumWidth(50);
 
     btns_layout->setAlignment(Qt::AlignLeft);
 
@@ -187,15 +179,6 @@ void MainWindow::createChangePageWgts()
     toolbar->addWidget( btns_wgt );
 
     QObject::connect(this, &MainWindow::isEnableSwitchingBtns, this, &MainWindow::enableSwitchingBtns);
-    QObject::connect(this, &MainWindow::pagesCount, pages_cnt, &QLabel::setText);
-    QObject::connect(this, &MainWindow::isPageChange, this, &MainWindow::setPageIndex);
-    QObject::connect(this, &MainWindow::pagesCount, cur_page, [cur_page, this](const QString &max_page)
-        {
-            cur_page->setValidator(nullptr);
-            cur_page->setText("1");
-            cur_page->setValidator( new QIntValidator(1, max_page.toInt(), this) );
-        }
-    );
 }
 
 void MainWindow::createToolBar()
@@ -228,36 +211,34 @@ void MainWindow::connectTabWithChangePageBtns(Tab* tab)
     tab->addSender(next_btn, Tab::PageName::Right);
     tab->addSender(cur_page_index_line, Tab::PageName::All);
 
-    QObject::connect(prev_btn, &QPushButton::clicked, tab,  [this, tab, valid, cur_page_index_line]()
+    QObject::connect(prev_btn, &QPushButton::clicked, tab,  [this, tab, valid, cur_page_index_line, prev_btn]()
         {
             int page_index = cur_page_index_line->text().toInt() - 1;
             // Валидация номера страницы
             if( !valid(page_index))
                 return;
             emit isEnableSwitchingBtns(false); // блокируются кнопки
-            cur_page_index_line->setText( QString::number(page_index) );
-            tab->changePage( page_index, QObject::sender() );
+            tab->changePage( page_index, prev_btn );
             emit isEnableSwitchingBtns(true); // разблокируем
         },
         Qt::QueuedConnection
         );
-    QObject::connect(next_btn, &QPushButton::clicked,       this,   [this, tab, valid, cur_page_index_line]()
+    QObject::connect(next_btn, &QPushButton::clicked,       tab,   [this, tab, valid, cur_page_index_line, next_btn]()
         {
             int page_index = cur_page_index_line->text().toInt() + 1;
             // Валидация номера страницы
             if( !valid(page_index))
                 return;
             emit isEnableSwitchingBtns(false); // блокируются кнопки
-            cur_page_index_line->setText( QString::number(page_index) );
-            tab->changePage( page_index, QObject::sender() );
+            tab->changePage( page_index, next_btn );
             emit isEnableSwitchingBtns(true); // разблокируем
         },
         Qt::QueuedConnection
         );
-    QObject::connect(cur_page_index_line, &QLineEdit::returnPressed, this, [this, tab, cur_page_index_line]()
+    QObject::connect(cur_page_index_line, &QLineEdit::returnPressed, tab, [this, tab, cur_page_index_line]()
         {
             emit isEnableSwitchingBtns(false); // блокируются кнопки
-            tab->changePage( cur_page_index_line->text().toInt(), QObject::sender() );
+            tab->changePage( cur_page_index_line->text().toInt(), cur_page_index_line );
             emit isEnableSwitchingBtns(true); // разблокируем
         },
         Qt::QueuedConnection
@@ -282,28 +263,42 @@ QWidget* MainWindow::addTab(const QString& obj_name, const QString& tab_name, co
 
     int index = tabes.length();
     windows->insertTab(index, main_wgt, tab_name);
-    tabes.append( new Tab(nullptr, main_wgt, table_name, db_name, rows_in_page) );
+    QPointer<Tab> tab = new Tab(nullptr, main_wgt, table_name, db_name, rows_in_page);
 
-    QObject::connect(filter_wgt, &FilterWidget::submitFilters,       tabes[index].get(), &Tab::setFilters);
-    QObject::connect(filter_wgt, &FilterWidget::clearFiltersEffects, tabes[index].get(), &Tab::setDefaultPage);
-    QObject::connect(tabes[index].get(), &Tab::pagesCount,    this, &MainWindow::pagesCount);
-    QObject::connect(tabes[index].get(), &Tab::isPageChange,  this, &MainWindow::isPageChange);
-    QObject::connect(tabes[index].get(), &Tab::preparedModel, filter_wgt, &FilterWidget::updateColumns);
-    QObject::connect(tabes[index].get(), &Tab::preparedModel, search_wgt, &FilterWidget::updateColumns);
-    QObject::connect(windows, &QTabWidget::currentChanged,    tabes[index].get(), [this, index, main_wgt](int idx)
+    QObject::connect(filter_wgt, &FilterWidget::submitFilters,       tab, &Tab::setFilters);
+    QObject::connect(filter_wgt, &FilterWidget::clearFiltersEffects, tab, &Tab::setDefaultPage);
+    QObject::connect(tab, &Tab::preparedModel, filter_wgt, &FilterWidget::updateColumns);
+    QObject::connect(tab, &Tab::preparedModel, search_wgt, &SearchWidget::updateColumns);
+    QObject::connect(windows, &QTabWidget::currentChanged,    tab, [this, index, main_wgt](int idx)
         {
-            tabes[index]->blockFilter( index != idx );
-            cur_tab = tabes[idx].get();
-            cur_tab->getPagesCount();
-            cur_tab->getCurrentPage();
-            emit tabes[idx]->preparedModel( *tabes[idx]->getCurrentModel() );
+            if(idx == index)
+            {
+                cur_tab = tabes[idx].get();
+                cur_tab->blockSignalsSlots(false);
+                cur_tab->emitPagesCount();
+                cur_tab->emitCurrentPage();
+                cur_tab->emitCurrentPageInfo();
+            }
+            else
+                tabes[index]->blockSignalsSlots( true ); // Блокируем слоты для работы с фильтром в случае, если это не та страница
         }
     );
-    QObject::connect(filter_wgt, &FilterWidget::submitFilters,       tabes[index].get(), [status_bar, this]() { status_bar->showMessage("Фильтр включен"); } );
-    QObject::connect(filter_wgt, &FilterWidget::clearFiltersEffects, tabes[index].get(), [status_bar, this]() { status_bar->showMessage("Фильтр выключен"); } );
+    QObject::connect(filter_wgt, &FilterWidget::submitFilters,       tab, [status_bar, this]() { status_bar->showMessage("Фильтр включен"); } );
+    QObject::connect(filter_wgt, &FilterWidget::clearFiltersEffects, tab, [status_bar, this]() { status_bar->showMessage("Фильтр выключен"); } );
+    QObject::connect(tab, &Tab::isPageChange, this, &MainWindow::setPageIndex);
 
-    connectTabWithChangePageBtns(tabes[index].get());
+    auto cur_page = this->findChild<QLineEdit*>("CurrentPageIndexLineEdit");
+    auto max_page_lbl = this->findChild<QLabel*>("PagesCountLabel");
 
+    QObject::connect( tab, &Tab::pagesCount, [this, cur_page, max_page_lbl](QString max_page)
+    {
+        cur_page->setValidator(nullptr);
+        cur_page->setValidator( new QIntValidator(1, max_page.toInt() ) );
+        max_page_lbl->setText(max_page);
+    }
+    );
+    connectTabWithChangePageBtns(tab.get());
+    tabes.append( std::move(tab) );
     return main_wgt;
 }
 

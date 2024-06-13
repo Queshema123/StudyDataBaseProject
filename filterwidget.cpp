@@ -6,6 +6,7 @@
 #include <QLineEdit>
 #include <QCheckBox>
 #include <QLabel>
+#include <QVariant>
 
 #include <QSqlRecord>
 #include <QSqlField>
@@ -152,27 +153,27 @@ void FilterWidget::fillListOfOperations(QComboBox* box, FieldType type)
 
 void FilterWidget::fillFilterInfo()
 {
-    QList<QWidget*> wgts = this->findChild<QWidget*>("FiltersWidget")->findChildren<QWidget*>("FilterLineWidget");
+    QList<QWidget*> wgts =this->findChildren<QWidget*>("FilterLineWidget");
     for(auto wgt : wgts)
     {
         CompareOperations operation = static_cast<CompareOperations>( wgt->findChild<QComboBox*>("OperationsComboBox")->currentData().toInt() );
-        if(operation == CompareOperations::Unable)
-            continue;
         int col_ind = wgt->findChild<QComboBox*>("ColumnsComboBox")->currentData().toInt();
         QString value = wgt->findChild<QLineEdit*>()->text();
-        info.append( Info(col_ind, operation, value) );
+        info.append( Info(col_ind, operation, value, index_column_name[col_ind]) );
     }
 }
 
 void FilterWidget::submitChooseFilters()
 {
-    info.clear();
     fillFilterInfo();
+    cached_info_for_tabs[current_tab] = info;
     emit submitFilters(info);
 }
 
 FilterWidget::FilterWidget(QWidget* parent) : QWidget{parent}
 {
+    this->setFocusPolicy( Qt::NoFocus );
+    this->setWindowTitle("Filter");
     QVBoxLayout* main_layout = new QVBoxLayout;
     this->setLayout(main_layout);
     QHBoxLayout* btns_layout = new QHBoxLayout;
@@ -195,7 +196,7 @@ FilterWidget::FilterWidget(QWidget* parent) : QWidget{parent}
     QObject::connect(this, &FilterWidget::clearFiltersEffects, this, &FilterWidget::clearFilterWidgets);
 }
 
-void FilterWidget::addFilter(const QString &field, const QString &type)
+QWidget* FilterWidget::addFilter(const QString &field, const QString &type)
 {
     QHBoxLayout* filter_layout = new QHBoxLayout;
     QWidget* filter_wgt = new QWidget( this->findChild<QWidget*>("FiltersWidget") );
@@ -208,16 +209,15 @@ void FilterWidget::addFilter(const QString &field, const QString &type)
     QComboBox* op_list = new QComboBox;
     op_list->setObjectName("OperationsComboBox");
     QLineEdit* input_line = new QLineEdit;
+    input_line->setObjectName("InputValueLineEdit");
 
-    // QPushButton* delete_btn = new QPushButton("Delete filter");
     filter_layout->addWidget(col_list, 0, Qt::AlignLeft);
     filter_layout->addWidget(op_list, 0, Qt::AlignLeft);
     filter_layout->addWidget(input_line, 0, Qt::AlignRight);
-    // filter_layout->addWidget(delete_btn, 0, Qt::AlignRight);
 
     col_list->addItem(field, index_column_name.key(field));
     fillListOfOperations( op_list, getTypeOfField(type) );
-    // QObject::connect(delete_btn, SIGNAL(clicked(bool)), this, SLOT(deleteFilter()));
+    return filter_wgt;
 }
 
 void FilterWidget::deleteFilter()
@@ -233,11 +233,12 @@ void FilterWidget::deleteFilter()
 
 void FilterWidget::deleteFilterWidgets()
 {
-    QList<QWidget*> wgts = this->findChild<QWidget*>("FiltersWidget")->findChildren<QWidget*>();
+    QList<QWidget*> wgts = this->findChildren<QWidget*>("FilterLineWidget");
     for(auto wgt: wgts)
     {
         if(!wgt)
             continue;
+        this->layout()->removeWidget(wgt);
         wgt->deleteLater();
     }
 }
@@ -245,13 +246,33 @@ void FilterWidget::deleteFilterWidgets()
 void FilterWidget::updateColumns(const QSqlQueryModel& model)
 {
     info.clear();
+    current_tab = QObject::sender();
+
+    if(cached_info_for_tabs.contains(current_tab) && cached_info_for_tabs[current_tab].size() == model.record().count())
+        info = cached_info_for_tabs[current_tab];
+    else if(cached_info_for_tabs.contains(current_tab))
+        cached_info_for_tabs[current_tab] = info;
+    else
+        cached_info_for_tabs.insert(current_tab, info);
+
     index_column_name.clear();
     deleteFilterWidgets();
     QSqlRecord record = model.record();
+    QWidget* added_wgt{nullptr};
+    QList<Info>::iterator cur_info = info.begin();
     for(int i = 0; i < record.count(); ++i)
     {
         index_column_name.insert( i, record.fieldName(i) );
-        addFilter( record.fieldName(i), record.field(i).metaType().name() );
+
+        if(cur_info == info.end())
+            addFilter( record.fieldName(i), record.field(i).metaType().name() );
+        else
+        {
+            added_wgt = addFilter( cur_info->field_name, record.field(cur_info->field_name).metaType().name() );
+            added_wgt->findChild<QComboBox*>("OperationsComboBox")->setCurrentText( getOperationView(cur_info->operation) );
+            added_wgt->findChild<QLineEdit*>("InputValueLineEdit")->setText( cur_info->value.toString() );
+            ++cur_info;
+        }
     }
 }
 
@@ -261,5 +282,36 @@ void FilterWidget::clearFilterWidgets()
     for(auto input_line : input_lines)
     {
         input_line->clear();
+    }
+}
+
+bool FilterWidget::compareValues(CompareOperations op, const QVariant &left, const QVariant &right)
+{
+    switch (op) {
+    case CompareOperations::Equal:
+    case CompareOperations::Empty:
+        return QVariant::compare(left, right) == 0;
+    case CompareOperations::Greater:
+        return QVariant::compare(left, right) > 0;
+    case CompareOperations::GreaterOrEqual:
+         return QVariant::compare(left, right) >= 0;
+    case CompareOperations::Less:
+        return QVariant::compare(left, right) < 0;
+    case CompareOperations::LessOrEqual:
+        return QVariant::compare(left, right) <= 0;
+    case CompareOperations::NotEqual:
+         return QVariant::compare(left, right) != 0;
+    }
+    QString l = left.toString();
+    QString r = right.toString();
+    switch (op) {
+    case CompareOperations::StartsWith:
+        return l.indexOf(r) == 0;
+    case CompareOperations::Contains:
+        return l.indexOf(r) >= 0;
+    case CompareOperations::EndsWith:
+        return l.mid(l.indexOf(r)).length() == r.length();
+    default:
+        return false;
     }
 }

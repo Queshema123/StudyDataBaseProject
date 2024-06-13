@@ -15,6 +15,7 @@ SOURCES += \
     main.cpp \
     mainwindow.cpp \
     multisortfilterproxymodel.cpp \
+    searchwidget.cpp \
     tab.cpp
 
 HEADERS += \
@@ -22,6 +23,7 @@ HEADERS += \
     filterwidget.h \
     mainwindow.h \
     multisortfilterproxymodel.h \
+    searchwidget.h \
     tab.h
 
 FORMS += \
