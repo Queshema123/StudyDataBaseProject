@@ -7,6 +7,8 @@
 #include <QSqlQueryModel>
 #include <QVector>
 #include <QVariant>
+#include <functional>
+#include <array>
 
 struct Info;
 
@@ -14,11 +16,11 @@ class FilterWidget : public QWidget
 {
     Q_OBJECT
 public:
-    enum class CompareOperations{ Equal, NotEqual, Greater, Less, GreaterOrEqual, LessOrEqual, StartsWith, EndsWith, Contains, Empty, Unable };
+    enum class CompareOperations{ Equal, NotEqual, Greater, Less, GreaterOrEqual, LessOrEqual, StartsWith, EndsWith, Contains, Empty, Unable, MaxOp };
     enum class FieldType{Number, String, Unknown};
     FilterWidget(QWidget* parent = nullptr);
 public slots:
-    QWidget* addFilter(const QString &field, const QString &type);
+    void addFilter(const QString &field, const QString &type, const Info* inf = nullptr);
     void deleteFilter();
     void updateColumns(const QSqlQueryModel& model);
     static QString getStringOperationCondition(CompareOperations operation, const QString &value);
@@ -31,10 +33,7 @@ public slots:
 signals:
     void submitFilters(const QVector<Info>& other_info);
     void clearFiltersEffects();
-private slots:
-    void submitChooseFilters();
-    void deleteFilterWidgets();
-    void clearFilterWidgets();
+    void changeOperation(const QString&);
 private:
 
     static constexpr int string_op_cnt = 5;
@@ -59,6 +58,8 @@ private:
     };
     static const QMap<QString, FieldType> field_and_type;
 
+    static const std::array<std::function<bool(const QVariant&, const QVariant&)>, static_cast<int>(CompareOperations::MaxOp)> compares_func;
+
     void addActionsBtns(QLayout* layout, const QString& object_name, const QString& view);
     void fillListOfColumns(QComboBox* box);
     void fillListOfOperations(QComboBox* box, FieldType type);
@@ -69,6 +70,10 @@ protected:
     QVector<Info> info;
     QHash<QObject*, QVector<Info>> cached_info_for_tabs;
     QObject* current_tab;
+
+    void submitChooseFilters();
+    void deleteFilterWidgets();
+    void clearFilterWidgets();
 };
 
 struct Info
@@ -78,6 +83,8 @@ struct Info
     QVariant value;
     QString field_name;
     Info(int id, FilterWidget::CompareOperations op, const QVariant& val, const QString& field_name = "") : column_id{id}, operation{op}, value{val}, field_name{field_name} {}
+    explicit Info(int id = -1, FilterWidget::CompareOperations op = FilterWidget::CompareOperations::Unable, QVariant val= QVariant(""), const QString& field_name = ""):
+        column_id{id}, operation{op}, value{val}, field_name{field_name} { }
     bool operator==(const Info& other) const;
     bool operator!=(const Info& other) const { return !(*this == other); }
 };

@@ -33,7 +33,7 @@ void Tab::fillModels(PageName page, int index)
         pages[thread_idx].model->setQuery( getCurrentPageData(page_index, rows_in_page, cur_page_model->query().lastQuery(), db_name, table_name) );
     };
     int thread_idx = static_cast<int>(page);
-    switch (page) {
+    switch (page) { // Свернуть в массив
     case PageName::Left:
         pages[thread_idx].future = QtConcurrent::run(fillModel, thread_idx, index-1);
         break;
@@ -126,6 +126,7 @@ void Tab::changePage(int index_page, QObject* sender)
     pages[center].future.waitForFinished();
 
     cur_page_model = pages[center].model.get();
+
     view->setModel( cur_page_model );
 
     emitCurrentPage();
@@ -142,9 +143,15 @@ void Tab::blockSignalsSlots(bool b)
 void Tab::selectSearchedIndex(int row, int column)
 {
     pages[1].future.waitForFinished();
-    view->selectionModel()->select(
-        cur_page_model->index(row, column),  QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows
-    );
+    view->setSelectionMode(QAbstractItemView::SingleSelection );
+    view->setSelectionBehavior(QAbstractItemView::SelectRows);
+
+    view->selectRow(row);
+    view->setCurrentIndex( view->model()->index(row, column) );
+    view->setFocus();
+    //view->scrollTo( view->model()->index(row, column) );
+    //view->selectionModel()->setCurrentIndex( view->model()->index(row, column), QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows );
+    //view->selectionModel()->select( view->model()->index(row, column), QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
 }
 
 void Tab::emitPagesCount() { emit pagesCount(QString::number(max_page) ) ; }

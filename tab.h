@@ -43,6 +43,7 @@ public:
     explicit Tab(QObject *parent, const QWidget* wgt, const QString &table_name, const QString& db_name, int rows_in_page );
     const QSqlQueryModel* getCurrentModel() const { return cur_page_model; }
     const QTableView* getModeliew() const { return view; }
+    int getMaxPage() const { return max_page; }
 public slots:
     void changePage(int index_page, QObject* sender = nullptr);
     void addSender(QObject* sender, PageName state);

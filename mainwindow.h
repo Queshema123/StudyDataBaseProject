@@ -32,8 +32,6 @@ class MainWindow : public QMainWindow
 
     QVector<QPointer<Tab>> tabes;
 
-    QPair<int, int> getSearchedItemIndex(const QVector<Info>& info);
-    bool isRightRow(const QSqlRecord &row, const QVector<Info>& info);
     QPushButton* addBtn(QLayout* layout, const QString &object_name, const QString &style_sheet, const QString &view);
     QWidget* addTab(const QString& obj_name, const QString& tab_name, const QString& table_name);
 
@@ -43,10 +41,11 @@ class MainWindow : public QMainWindow
     void createFilter();
     void createSearch();
     void createToolBar();
-    void search(const QVector<Info>& info);
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
+public slots:
+    void selectRow(int row);
 signals:
     void isEnableSwitchingBtns(bool block);
 private slots:

@@ -22,11 +22,14 @@
 #include <QSqlResult>
 #include <QSqlIndex>
 
-#include <QtConcurrent>
-#include <QFuture>
-#include <thread>
-#include <memory>
-#include <algorithm>
+void MainWindow::selectRow(int row)
+{
+    int page_index = (row > rows_in_page) ? std::ceil( (double)row / rows_in_page) : 1; // int на int делится, поэтому пришлось кастить к double для округления
+    cur_tab->changePage(page_index);
+    // Находим остаток от деления, поскольку номер строки найденного индекса соответствует индексу для модели, которая содержит все записи из бд
+    // row() - номер строки в моделе со всеми записями, row() % rows_in_page - номер строки в моделе с 25 записями
+    cur_tab->selectSearchedIndex( (row-1) % rows_in_page, 0);
+}
 
 void MainWindow::enableSwitchingBtns(bool block)
 {
@@ -38,39 +41,6 @@ void MainWindow::enableSwitchingBtns(bool block)
 void MainWindow::setPageIndex(int page_index)
 {
     this->findChild<QLineEdit*>("CurrentPageIndexLineEdit")->setText(QString::number(page_index));
-}
-
-bool MainWindow::isRightRow(const QSqlRecord &row, const QVector<Info>& info)
-{
-    for(int i = 0; i < info.size(); ++i)
-    {
-        if(info[i].operation == FilterWidget::CompareOperations::Unable)
-            continue;
-        if( !FilterWidget::compareValues(info[i].operation, row.value(info[i].column_id), info[i].value) )
-            return false;
-    }
-    return true;
-}
-
-QPair<int, int> MainWindow::getSearchedItemIndex(const QVector<Info>& info)
-{// Не может знать о других записях по скольку хранит только 20, добавить поток, который вернет модель со всеми строками (без LIMIT OFFSET)
-    QString sqlQ = cur_tab->getCurrentModel()->query().lastQuery();
-    sqlQ = sqlQ.mid(0, sqlQ.indexOf("LIMIT"));
-    auto get_query = [sqlQ, this]() ->QSqlQuery
-    {
-        return QSqlQuery(sqlQ, getDB(db_name));
-    };
-    QFuture<QSqlQuery> future = QtConcurrent::run( get_query );
-    future.waitForFinished();
-    QSqlQuery full_record =  future.takeResult();
-    int row = 0;
-    while(full_record.next())
-    {
-        if( isRightRow(full_record.record(), info) )
-            return QPair<int, int>( row, 0 );
-        ++row;
-    }
-    return QPair<int, int>(-1, -1);
 }
 
 QPushButton* MainWindow::addBtn(QLayout* layout, const QString &object_name, const QString &style_sheet, const QString &view)
@@ -116,18 +86,6 @@ void MainWindow::createMenu()
     );
 }
 
-void MainWindow::search(const QVector<Info>& info)
-{
-    QFuture<QPair<int, int>> future = QtConcurrent::run(getSearchedItemIndex, this, info);
-    future.waitForFinished();
-    // Находим остаток от деления, поскольку номер строки найденного индекса соответствует индексу для модели, которая содержит все записи из бд
-    // row() - номер строки в моделе со всеми записями, row() % rows_in_page - номер строки в моделе с 25 записями
-    int page_index = (future.result().first > rows_in_page) ? std::ceil( (double)future.result().first / rows_in_page) : 1; // int на int делится поэтому пришлось кастить к double для округления
-    cur_tab->changePage(page_index);
-    qDebug() << page_index << future.result();
-    cur_tab->selectSearchedIndex(future.result().first % rows_in_page, future.result().second);
-}
-
 void MainWindow::createFilter()
 {
     QToolBar* toolbar = this->findChild<QToolBar*>();
@@ -151,7 +109,12 @@ void MainWindow::createSearch()
     search_wgt = new SearchWidget;
 
     QObject::connect(search_btn, &QPushButton::clicked,       search_wgt, &SearchWidget::show);
-    QObject::connect(search_wgt, &SearchWidget::submitFilters, this, &MainWindow::search );
+    QObject::connect(search_wgt, &SearchWidget::submitFilters, this, [this](const QVector<Info>& info)
+    {
+        search_wgt->search(info, cur_tab->getCurrentModel()->query().lastQuery(), db_name, cur_tab->getMaxPage() );
+    }
+    );
+    QObject::connect(search_wgt, &SearchWidget::searchedRow, this, &MainWindow::selectRow);
 }
 
 void MainWindow::createChangePageWgts()

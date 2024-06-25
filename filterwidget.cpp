@@ -7,6 +7,7 @@
 #include <QCheckBox>
 #include <QLabel>
 #include <QVariant>
+#include <QPointer>
 
 #include <QSqlRecord>
 #include <QSqlField>
@@ -19,6 +20,27 @@ const QMap<QString, FilterWidget::FieldType> FilterWidget::field_and_type =
 {
     {"double", FilterWidget::FieldType::Number}, {"int", FilterWidget::FieldType::Number},
     {"QString", FilterWidget::FieldType::String}
+};
+
+const std::array<std::function<bool(const QVariant&, const QVariant&)>, static_cast<int>(FilterWidget::CompareOperations::MaxOp)> FilterWidget::compares_func =
+{
+    [](const QVariant& left, const QVariant& right){ return QVariant::compare(left, right) == 0; },
+    [](const QVariant& left, const QVariant& right){ return QVariant::compare(left, right) != 0; },
+    [](const QVariant& left, const QVariant& right){ return QVariant::compare(left, right) > 0; },
+    [](const QVariant& left, const QVariant& right){ return QVariant::compare(left, right) < 0; },
+    [](const QVariant& left, const QVariant& right){ return QVariant::compare(left, right) >= 0; },
+    [](const QVariant& left, const QVariant& right){ return QVariant::compare(left, right) <= 0; },
+
+    [](const QVariant& left, const QVariant& right){ return left.toString().indexOf(right.toString()) == 0; },
+    [](const QVariant& left, const QVariant& right){
+        QString l = left.toString();
+        QString r = right.toString();
+        return l.mid(l.indexOf(r)).length() == r.length();
+    },
+    [](const QVariant& left, const QVariant& right){ return left.toString().indexOf(right.toString()) >= 0; },
+
+    [](const QVariant& left, const QVariant& right){ return QVariant::compare(left, right) == 0; },
+    [](const QVariant& left, const QVariant& right){ return false; },
 };
 
 QString FilterWidget::getStringOperationCondition(CompareOperations operation, const QString &value)
@@ -153,19 +175,24 @@ void FilterWidget::fillListOfOperations(QComboBox* box, FieldType type)
 
 void FilterWidget::fillFilterInfo()
 {
-    QList<QWidget*> wgts =this->findChildren<QWidget*>("FilterLineWidget");
-    for(auto wgt : wgts)
+    QList<Info>::iterator cur_inf = info.begin();
+    QList<QWidget*> wgts = this->findChildren<QWidget*>("FilterLineWidget");
+    for(const auto& wgt : wgts)
     {
-        CompareOperations operation = static_cast<CompareOperations>( wgt->findChild<QComboBox*>("OperationsComboBox")->currentData().toInt() );
+        CompareOperations operation = static_cast<CompareOperations>(wgt->findChild<QComboBox*>("OperationsComboBox")->currentData().toInt() );
         int col_ind = wgt->findChild<QComboBox*>("ColumnsComboBox")->currentData().toInt();
         QString value = wgt->findChild<QLineEdit*>()->text();
-        info.append( Info(col_ind, operation, value, index_column_name[col_ind]) );
+
+        cur_inf->column_id = col_ind;
+        cur_inf->operation = operation;
+        cur_inf->field_name = index_column_name[col_ind];
+        cur_inf->value = value;
+        ++cur_inf;
     }
 }
 
 void FilterWidget::submitChooseFilters()
 {
-    info.clear();
     fillFilterInfo();
     if(cached_info_for_tabs[current_tab] != info)
     {
@@ -198,20 +225,27 @@ FilterWidget::FilterWidget(QWidget* parent) : QWidget{parent}
     QObject::connect(this, &FilterWidget::clearFiltersEffects, this, &FilterWidget::clearFilterWidgets);
 }
 
-QWidget* FilterWidget::addFilter(const QString &field, const QString &type)
+void FilterWidget::addFilter(const QString &field, const QString &type, const Info* inf)
 {
+    auto ptr = std::make_unique<const Info>();
+    if(!inf)
+        inf = ptr.get();
+    else
+        ptr.release(); // Освобождаем ресурсы
+
     QHBoxLayout* filter_layout = new QHBoxLayout;
-    QWidget* filter_wgt = new QWidget( this->findChild<QWidget*>("FiltersWidget") );
+    QWidget* filter_wgt = new QWidget( this );
     filter_wgt->setLayout(filter_layout);
     filter_wgt->setObjectName("FilterLineWidget");
     this->findChild<QLayout*>("FiltersLayout")->addWidget(filter_wgt);
 
-    QComboBox* col_list = new QComboBox;
+    QComboBox* col_list = new QComboBox(filter_wgt);
     col_list->setObjectName("ColumnsComboBox");
-    QComboBox* op_list = new QComboBox;
+    QComboBox* op_list = new QComboBox(filter_wgt);
     op_list->setObjectName("OperationsComboBox");
-    QLineEdit* input_line = new QLineEdit;
+    QLineEdit* input_line = new QLineEdit(filter_wgt);
     input_line->setObjectName("InputValueLineEdit");
+    input_line->setText( inf->value.toString() );
 
     filter_layout->addWidget(col_list, 0, Qt::AlignLeft);
     filter_layout->addWidget(op_list, 0, Qt::AlignLeft);
@@ -219,7 +253,7 @@ QWidget* FilterWidget::addFilter(const QString &field, const QString &type)
 
     col_list->addItem(field, index_column_name.key(field));
     fillListOfOperations( op_list, getTypeOfField(type) );
-    return filter_wgt;
+    op_list->setCurrentText( getOperationView(inf->operation) );
 }
 
 void FilterWidget::deleteFilter()
@@ -240,42 +274,30 @@ void FilterWidget::deleteFilterWidgets()
     {
         if(!wgt)
             continue;
-        this->layout()->removeWidget(wgt);
+        this->findChild<QLayout*>("FiltersLayout")->removeWidget(wgt);
+        wgt->layout()->deleteLater();
         wgt->deleteLater();
     }
 }
 
 void FilterWidget::updateColumns(const QSqlQueryModel& model)
 {
-    info.clear();
     current_tab = QObject::sender();
 
-    if(cached_info_for_tabs.contains(current_tab) && cached_info_for_tabs[current_tab].size() == model.record().count())
-        info = cached_info_for_tabs[current_tab];
-    else if(cached_info_for_tabs.contains(current_tab))
-        cached_info_for_tabs[current_tab] = info;
-    else
-        cached_info_for_tabs.insert(current_tab, info);
+    if(!cached_info_for_tabs.contains(current_tab))
+        cached_info_for_tabs.insert(current_tab, QList<Info>(model.record().count()) );
 
+    info = cached_info_for_tabs[current_tab];
     index_column_name.clear();
     deleteFilterWidgets();
+
     QSqlRecord record = model.record();
-    QWidget* added_wgt{nullptr};
-    QList<Info>::iterator cur_info = info.begin();
     for(int i = 0; i < record.count(); ++i)
     {
         index_column_name.insert( i, record.fieldName(i) );
-
-        if(cur_info == info.end())
-        {
-            addFilter( record.fieldName(i), record.field(i).metaType().name() );
-            continue;
-        }
-
-        added_wgt = addFilter( cur_info->field_name, record.field(cur_info->field_name).metaType().name() );
-        added_wgt->findChild<QComboBox*>("OperationsComboBox")->setCurrentText( getOperationView(cur_info->operation) );
-        added_wgt->findChild<QLineEdit*>("InputValueLineEdit")->setText( cur_info->value.toString() );
-        ++cur_info;
+        info[i].field_name = record.fieldName(i);
+        info[i].column_id = i;
+        addFilter( info[i].field_name, record.field( info[i].field_name ).metaType().name(), &info[i] );
     }
 }
 
@@ -290,33 +312,7 @@ void FilterWidget::clearFilterWidgets()
 
 bool FilterWidget::compareValues(CompareOperations op, const QVariant &left, const QVariant &right)
 {
-    switch (op) {
-    case CompareOperations::Equal:
-    case CompareOperations::Empty:
-        return QVariant::compare(left, right) == 0;
-    case CompareOperations::Greater:
-        return QVariant::compare(left, right) > 0;
-    case CompareOperations::GreaterOrEqual:
-         return QVariant::compare(left, right) >= 0;
-    case CompareOperations::Less:
-        return QVariant::compare(left, right) < 0;
-    case CompareOperations::LessOrEqual:
-        return QVariant::compare(left, right) <= 0;
-    case CompareOperations::NotEqual:
-         return QVariant::compare(left, right) != 0;
-    }
-    QString l = left.toString();
-    QString r = right.toString();
-    switch (op) {
-    case CompareOperations::StartsWith:
-        return l.indexOf(r) == 0;
-    case CompareOperations::Contains:
-        return l.indexOf(r) >= 0;
-    case CompareOperations::EndsWith:
-        return l.mid(l.indexOf(r)).length() == r.length();
-    default:
-        return false;
-    }
+    return compares_func[static_cast<int>(op)](left, right);
 }
 
 bool Info::operator==(const Info& other) const
