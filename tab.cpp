@@ -33,19 +33,28 @@ void Tab::fillModels(PageName page, int index)
         pages[thread_idx].model->setQuery( getCurrentPageData(page_index, rows_in_page, cur_page_model->query().lastQuery(), db_name, table_name) );
     };
     int thread_idx = static_cast<int>(page);
-    switch (page) { // Свернуть в массив
+    switch (page) {
     case PageName::Left:
+        emit isLeftPagePrepared(false);
         pages[thread_idx].future = QtConcurrent::run(fillModel, thread_idx, index-1);
+        pages[thread_idx].future.then( [this](){ emit isLeftPagePrepared(true); } );
         break;
     case PageName::Right:
+        emit isRightPagePrepared(false);
         pages[thread_idx].future = QtConcurrent::run(fillModel, thread_idx, index+1);
+        pages[thread_idx].future.then( [this](){ emit isRightPagePrepared(true); } );
         break;
     default:
         thread_idx = static_cast<int>(PageName::Center);
+        emit isLeftPagePrepared(false);
+        emit isRightPagePrepared(false);
 
         pages[thread_idx-1].future = QtConcurrent::run(fillModel, thread_idx-1, index-1);
         pages[thread_idx].future   = QtConcurrent::run(fillModel, thread_idx, index  );
         pages[thread_idx+1].future = QtConcurrent::run(fillModel, thread_idx+1, index+1);
+
+        pages[thread_idx-1].future.then( [this](){ emit isLeftPagePrepared(true); } );
+        pages[thread_idx+1].future.then( [this](){ emit isRightPagePrepared(true); } );
         break;
     }
 }
@@ -149,9 +158,6 @@ void Tab::selectSearchedIndex(int row, int column)
     view->selectRow(row);
     view->setCurrentIndex( view->model()->index(row, column) );
     view->setFocus();
-    //view->scrollTo( view->model()->index(row, column) );
-    //view->selectionModel()->setCurrentIndex( view->model()->index(row, column), QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows );
-    //view->selectionModel()->select( view->model()->index(row, column), QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
 }
 
 void Tab::emitPagesCount() { emit pagesCount(QString::number(max_page) ) ; }

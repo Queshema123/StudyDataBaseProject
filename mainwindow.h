@@ -46,11 +46,8 @@ public:
     ~MainWindow();
 public slots:
     void selectRow(int row);
-signals:
-    void isEnableSwitchingBtns(bool block);
 private slots:
     void setPageIndex(int page_index);
-    void enableSwitchingBtns(bool block);
 };
 
 #endif // MAINWINDOW_H

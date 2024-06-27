@@ -67,17 +67,22 @@ void SearchWidget::addSwitchesWgts()
     QObject::connect(this, &SearchWidget::searchedRowsCount, max_elements_cnt,   [max_elements_cnt](int elem) { max_elements_cnt->setNum(elem); } );
     QObject::connect(this, &SearchWidget::changeElement, current_element_number, [current_element_number](int elem) { current_element_number->setNum(elem); } );
 
-    auto get_next_index = [this](int increment, int bound)
+    auto get_next_index = [this](int bound)
     {
-        return (current_row_index+increment < bound) ? current_row_index+increment : bound-1;
+        return (current_row_index+1 < bound) ? current_row_index+1 : bound-1;
     };
-    QObject::connect(prev_btn, &QPushButton::clicked, this, [this, get_next_index](){ setNextElement( get_next_index(-1, 1) ); } );
-    QObject::connect(next_btn, &QPushButton::clicked, this, [this, get_next_index](){ setNextElement( get_next_index(1, searched_rows.size()) ); } );
+    auto get_prev_index = [this]()
+    {
+        return (current_row_index-1 > -1) ? current_row_index-1 : 1;
+    };
+    QObject::connect(prev_btn, &QPushButton::clicked, this, [this, get_prev_index](){ setNextElement( get_prev_index() ); } );
+    QObject::connect(next_btn, &QPushButton::clicked, this, [this, get_next_index](){ setNextElement( get_next_index( searched_rows.size() ) ); } );
 }
 
 SearchWidget::SearchWidget(FilterWidget* parent): FilterWidget{parent}, f_thread_idx{0}, current_row{std::numeric_limits<int>::max()}, current_row_index{-1},
     isFind{false}, isSorted{false}
 {
+    this->setModal(false);
     this->setWindowTitle("Search");
     QObject::connect(this, &SearchWidget::clearFiltersEffects, this, &SearchWidget::clearFilterWidgets);
     addSwitchesWgts();

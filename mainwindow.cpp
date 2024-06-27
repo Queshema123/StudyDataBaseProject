@@ -31,13 +31,6 @@ void MainWindow::selectRow(int row)
     cur_tab->selectSearchedIndex( (row-1) % rows_in_page, 0);
 }
 
-void MainWindow::enableSwitchingBtns(bool block)
-{
-    this->findChild<QPushButton*>("prevPageBtn")->setEnabled(block);
-    this->findChild<QPushButton*>("nextPageBtn")->setEnabled(block);
-    this->findChild<QLineEdit*>("CurrentPageIndexLineEdit")->setEnabled(block);
-}
-
 void MainWindow::setPageIndex(int page_index)
 {
     this->findChild<QLineEdit*>("CurrentPageIndexLineEdit")->setText(QString::number(page_index));
@@ -96,6 +89,7 @@ void MainWindow::createFilter()
     toolbar->addWidget(filter_btn);
 
     QObject::connect(filter_btn, &QPushButton::clicked,              filter_wgt, &FilterWidget::show);
+    QObject::connect(filter_wgt, &FilterWidget::submitFilters, [this](){ filter_wgt->close(); });
 }
 
 void MainWindow::createSearch()
@@ -140,8 +134,6 @@ void MainWindow::createChangePageWgts()
     btns_wgt->setLayout(btns_layout);
 
     toolbar->addWidget( btns_wgt );
-
-    QObject::connect(this, &MainWindow::isEnableSwitchingBtns, this, &MainWindow::enableSwitchingBtns);
 }
 
 void MainWindow::createToolBar()
@@ -180,9 +172,7 @@ void MainWindow::connectTabWithChangePageBtns(Tab* tab)
             // Валидация номера страницы
             if( !valid(page_index))
                 return;
-            emit isEnableSwitchingBtns(false); // блокируются кнопки
             tab->changePage( page_index, prev_btn );
-            emit isEnableSwitchingBtns(true); // разблокируем
         },
         Qt::QueuedConnection
         );
@@ -192,20 +182,18 @@ void MainWindow::connectTabWithChangePageBtns(Tab* tab)
             // Валидация номера страницы
             if( !valid(page_index))
                 return;
-            emit isEnableSwitchingBtns(false); // блокируются кнопки
             tab->changePage( page_index, next_btn );
-            emit isEnableSwitchingBtns(true); // разблокируем
         },
         Qt::QueuedConnection
         );
     QObject::connect(cur_page_index_line, &QLineEdit::returnPressed, tab, [this, tab, cur_page_index_line]()
         {
-            emit isEnableSwitchingBtns(false); // блокируются кнопки
             tab->changePage( cur_page_index_line->text().toInt(), cur_page_index_line );
-            emit isEnableSwitchingBtns(true); // разблокируем
         },
         Qt::QueuedConnection
         );
+    QObject::connect(tab, &Tab::isLeftPagePrepared, prev_btn, &QPushButton::setEnabled);
+    QObject::connect(tab, &Tab::isRightPagePrepared, next_btn, &QPushButton::setEnabled);
 }
 
 QWidget* MainWindow::addTab(const QString& obj_name, const QString& tab_name, const QString& table_name)

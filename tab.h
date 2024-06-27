@@ -55,6 +55,8 @@ public slots:
     void emitCurrentPageInfo();
     void selectSearchedIndex(int row, int column);
 signals:
+    void isLeftPagePrepared(bool);
+    void isRightPagePrepared(bool);
     void isPageChange(int page);
     void pagesCount(QString count);
     void preparedModel(const QSqlQueryModel &model);

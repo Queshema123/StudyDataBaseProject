@@ -201,9 +201,9 @@ void FilterWidget::submitChooseFilters()
     emit submitFilters(cached_info_for_tabs[current_tab]);
 }
 
-FilterWidget::FilterWidget(QWidget* parent) : QWidget{parent}
+FilterWidget::FilterWidget(QDialog* parent) : QDialog{parent}
 {
-    this->setFocusPolicy( Qt::NoFocus );
+    this->setModal(true);
     this->setWindowTitle("Filter");
     QVBoxLayout* main_layout = new QVBoxLayout;
     this->setLayout(main_layout);
@@ -231,7 +231,7 @@ void FilterWidget::addFilter(const QString &field, const QString &type, const In
     if(!inf)
         inf = ptr.get();
     else
-        ptr.release(); // Освобождаем ресурсы
+        ptr.release(); // Освобождаем память
 
     QHBoxLayout* filter_layout = new QHBoxLayout;
     QWidget* filter_wgt = new QWidget( this );
@@ -307,6 +307,11 @@ void FilterWidget::clearFilterWidgets()
     for(auto input_line : input_lines)
     {
         input_line->clear();
+    }
+    QList<QComboBox*> operations_boxes = this->findChildren<QComboBox*>("OperationsComboBox");
+    for(auto box : operations_boxes)
+    {
+        box->setCurrentText( getOperationView(CompareOperations::Unable) );
     }
 }
 

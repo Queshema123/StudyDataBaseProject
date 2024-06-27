@@ -7,18 +7,19 @@
 #include <QSqlQueryModel>
 #include <QVector>
 #include <QVariant>
+#include <QDialog>
 #include <functional>
 #include <array>
 
 struct Info;
 
-class FilterWidget : public QWidget
+class FilterWidget : public QDialog
 {
     Q_OBJECT
 public:
     enum class CompareOperations{ Equal, NotEqual, Greater, Less, GreaterOrEqual, LessOrEqual, StartsWith, EndsWith, Contains, Empty, Unable, MaxOp };
     enum class FieldType{Number, String, Unknown};
-    FilterWidget(QWidget* parent = nullptr);
+    FilterWidget(QDialog* parent = nullptr);
 public slots:
     void addFilter(const QString &field, const QString &type, const Info* inf = nullptr);
     void deleteFilter();
